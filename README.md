@@ -1,14 +1,16 @@
 # Decrypto LLM Benchmark
 
-A multi-agent simulation of the board game **Decrypto** to evaluate and compare LLM capabilities across three distinct roles: strategic communication, informed decoding, and pattern inference under information asymmetry.
-
-Inspired by the analytical framework introduced in [*Deceive, Detect, and Disclose: Large Language Models Play Mini-Mafia*](https://arxiv.org/abs/2509.23023) (Costa & Vicente, 2026).
+A multi-agent benchmark for evaluating LLM capabilities under information asymmetry, **inspired by the board game Decrypto**. Three agents compete across three roles — strategic communication, informed decoding, and blind pattern inference — in a controlled environment where private and public information interact over multiple rounds.
 
 ---
 
-## Game Overview
+## Overview
 
-Each game uses **4 keyword cards** (numbered 1–4) known only to the Encryptor and Decoder. Over **8 rounds**, a 3-digit code is drawn each round (no repetition, from the 24 possible permutations of {1,2,3,4} taken 3 at a time). Three LLM agents play:
+The simulation uses **4 keyword cards** (numbered 1–4), known only to two of the three agents. Over **8 rounds**, a 3-digit code is drawn each round (no repetition, from the 24 possible permutations of {1,2,3,4} taken 3 at a time). The core tension: one agent must communicate the code through word clues, helping a teammate while trying not to reveal the keywords to the opponent.
+
+> This is not a faithful recreation of the board game. It simplifies the original rules to isolate and measure specific LLM capabilities in a reproducible, automated setting.
+
+### Roles
 
 | Role | Information | Objective |
 |------|-------------|-----------|
@@ -16,7 +18,7 @@ Each game uses **4 keyword cards** (numbered 1–4) known only to the Encryptor 
 | **Decoder** | Knows the 4 keywords | Reconstruct the 3-digit code from the clues |
 | **Interceptor** | Does **not** know the keywords | Infer the code from the clues and accumulated history |
 
-All clues, guesses, and actual codes are **public** and accumulate across rounds — the Interceptor can learn the keyword mapping over time. Only the keyword cards themselves are private.
+All clues, guesses, and actual codes are **public** to all three agents and accumulate across rounds — the Interceptor can gradually learn the keyword mapping. Only the keyword cards themselves are private.
 
 ### Round order
 
@@ -38,7 +40,7 @@ Encryptor gives 3 clues  →  Interceptor guesses  →  Decoder guesses
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-username>/decrypto.git
+git clone https://github.com/lfguaint/decrypto.git
 cd decrypto
 
 # 2. Install dependencies
@@ -48,7 +50,7 @@ pip install -r requirements.txt
 export OPENROUTER_API_KEY="sk-or-..."
 ```
 
-Get an API key at [openrouter.ai/keys](https://openrouter.ai/keys). OpenRouter provides access to all 10 benchmark models through a single OpenAI-compatible API.
+Get an API key at [openrouter.ai/keys](https://openrouter.ai/keys). OpenRouter provides access to all benchmark models through a single OpenAI-compatible API.
 
 ---
 
@@ -58,7 +60,7 @@ Get an API key at [openrouter.ai/keys](https://openrouter.ai/keys). OpenRouter p
 # Quick test — all roles use DeepSeek V3.2 (cheapest, ~$0.003/game)
 python main.py --seed 42
 
-# Use model shortcuts (see table below)
+# Assign different models to each role using shortcuts
 python main.py \
   --encryptor-model claude-opus \
   --decoder-model gpt-5-mini \
@@ -77,23 +79,23 @@ Results are saved to `results.json` by default. Use `--output` to change the pat
 ### All options
 
 ```
---keyword-sets     Number of keyword sets to generate     (default: 3)
---games-per-set    Games per keyword set                  (default: 2)
---rounds           Rounds per game, max 24                (default: 8)
---seed             Random seed for reproducibility
---encryptor-model  Model shortcut or full OpenRouter ID
---decoder-model    Model shortcut or full OpenRouter ID
+--keyword-sets      Number of keyword sets to generate     (default: 3)
+--games-per-set     Games per keyword set                  (default: 2)
+--rounds            Rounds per game, max 24                (default: 8)
+--seed              Random seed for reproducibility
+--encryptor-model   Model shortcut or full OpenRouter ID
+--decoder-model     Model shortcut or full OpenRouter ID
 --interceptor-model Model shortcut or full OpenRouter ID
---temperature      Sampling temperature                   (default: 0.7)
---max-tokens       Max output tokens per call             (default: 256)
---output           Output JSON file                       (default: results.json)
+--temperature       Sampling temperature                   (default: 0.7)
+--max-tokens        Max output tokens per call             (default: 256)
+--output            Output JSON file                       (default: results.json)
 ```
 
 ---
 
-## Benchmark Models
+## Models
 
-Ten models selected to cover the current frontier, mid-tier, and value segments across major providers:
+Ten models covering the current frontier, mid-tier, and value segments across major providers:
 
 | Shortcut | Model | Provider | Input $/MTok | Output $/MTok |
 |----------|-------|----------|:---:|:---:|
@@ -162,13 +164,12 @@ decrypto/
 
 ## Suggested Experiment Design
 
-To compare models systematically (analogous to the Mini-Mafia benchmark approach), fix two roles with a reference model and vary the third:
+Fix two roles with a reference model and vary the third to isolate each role's contribution:
 
 ```bash
 REFERENCE="deepseek"
 
 for MODEL in claude-opus claude-haiku gpt-5.2 gpt-5-mini gemini-pro grok deepseek llama qwen kimi; do
-  # Vary the Interceptor
   python main.py \
     --encryptor-model $REFERENCE \
     --decoder-model $REFERENCE \
@@ -178,17 +179,4 @@ for MODEL in claude-opus claude-haiku gpt-5.2 gpt-5-mini gemini-pro grok deepsee
 done
 ```
 
-Repeat for Encryptor and Decoder. This yields 30 configurations — manageable and directly comparable across roles.
-
----
-
-## Reference
-
-```bibtex
-@article{costa2026minimalfia,
-  title   = {Deceive, Detect, and Disclose: Large Language Models Play Mini-Mafia},
-  author  = {Costa, Davi Bastos and Vicente, Renato},
-  journal = {arXiv preprint arXiv:2509.23023},
-  year    = {2026}
-}
-```
+Repeat varying the Encryptor and Decoder roles. This yields 30 configurations — manageable and directly comparable across roles.
