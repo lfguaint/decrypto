@@ -5,29 +5,52 @@ import re
 
 from openai import OpenAI
 
-from config import AgentConfig
+from config import AgentConfig, Backend, BACKEND_SETTINGS, OLLAMA_MODELS, OPENROUTER_MODELS
 from models import KeywordPair, RoundRecord
 import prompts
 
 
-def _make_client() -> OpenAI:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY environment variable is not set.\n"
-            "Get your key at https://openrouter.ai/keys"
+def _make_client(backend: str) -> OpenAI:
+    settings = BACKEND_SETTINGS[backend]
+
+    if backend == Backend.OLLAMA:
+        return OpenAI(
+            base_url=settings["base_url"],
+            api_key=settings["api_key"],
         )
-    return OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key,
-        default_headers={
-            "HTTP-Referer": "https://github.com/decrypto-simulation",
-            "X-Title": "Decrypto LLM Simulation",
-        },
-    )
+
+    if backend == Backend.OPENROUTER:
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "OPENROUTER_API_KEY environment variable is not set.\n"
+                "Get your key at https://openrouter.ai/keys"
+            )
+        return OpenAI(
+            base_url=settings["base_url"],
+            api_key=api_key,
+            default_headers=settings["default_headers"],
+        )
+
+    raise ValueError(f"Unknown backend: {backend!r}. Use 'ollama' or 'openrouter'.")
 
 
-def _call(client: OpenAI, model: str, system: str, user: str, max_tokens: int, temperature: float) -> str:
+def _resolve_model(model: str, backend: str) -> str:
+    if backend == Backend.OLLAMA:
+        return OLLAMA_MODELS.get(model, model)
+    if backend == Backend.OPENROUTER:
+        return OPENROUTER_MODELS.get(model, model)
+    return model
+
+
+def _call(
+    client: OpenAI,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -41,68 +64,84 @@ def _call(client: OpenAI, model: str, system: str, user: str, max_tokens: int, t
 
 
 def _parse_json(text: str) -> dict:
-    # Strip markdown code fences if present
     cleaned = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
     return json.loads(cleaned)
 
 
-def _parse_guess(text: str) -> tuple[int, int, int]:
+def _parse_guess(text: str, code_length: int) -> tuple:
     data = _parse_json(text)
     g = data["guess"]
-    return (int(g[0]), int(g[1]), int(g[2]))
+    return tuple(int(x) for x in g[:code_length])
 
 
-def _parse_clues(text: str) -> tuple[str, str, str]:
+def _parse_clues(text: str, code_length: int) -> tuple:
     data = _parse_json(text)
-    return (str(data["clue1"]), str(data["clue2"]), str(data["clue3"]))
+    return tuple(str(data[f"clue{i+1}"]) for i in range(code_length))
 
 
 class Encryptor:
-    def __init__(self, client: OpenAI, cfg: AgentConfig, keywords: list[KeywordPair]):
+    def __init__(
+        self,
+        client: OpenAI,
+        cfg: AgentConfig,
+        backend: str,
+        keywords: list[KeywordPair],
+        code_length: int,
+    ):
         self._client = client
         self._cfg = cfg
-        self._system = prompts.encryptor_system(keywords)
+        self._model = _resolve_model(cfg.encryptor_model, backend)
+        self._code_length = code_length
+        self._system = prompts.encryptor_system(keywords, code_length)
 
-    def give_clues(
-        self, code: tuple[int, int, int], history: list[RoundRecord]
-    ) -> tuple[str, str, str]:
+    def give_clues(self, code: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.encryptor_user(code, history)
-        raw = _call(
-            self._client, self._cfg.encryptor_model, self._system, user,
-            self._cfg.max_tokens, self._cfg.temperature,
-        )
-        return _parse_clues(raw)
+        raw = _call(self._client, self._model, self._system, user,
+                    self._cfg.max_tokens, self._cfg.temperature)
+        return _parse_clues(raw, self._code_length)
 
 
 class Interceptor:
-    def __init__(self, client: OpenAI, cfg: AgentConfig):
+    def __init__(
+        self,
+        client: OpenAI,
+        cfg: AgentConfig,
+        backend: str,
+        num_keywords: int,
+        code_length: int,
+    ):
         self._client = client
         self._cfg = cfg
-        self._system = prompts.interceptor_system()
+        self._model = _resolve_model(cfg.interceptor_model, backend)
+        self._num_keywords = num_keywords
+        self._code_length = code_length
+        self._system = prompts.interceptor_system(num_keywords, code_length)
 
-    def guess(
-        self, clues: tuple[str, str, str], history: list[RoundRecord]
-    ) -> tuple[int, int, int]:
-        user = prompts.interceptor_user(clues, history)
-        raw = _call(
-            self._client, self._cfg.interceptor_model, self._system, user,
-            self._cfg.max_tokens, self._cfg.temperature,
-        )
-        return _parse_guess(raw)
+    def guess(self, clues: tuple, history: list[RoundRecord]) -> tuple:
+        user = prompts.interceptor_user(clues, history, self._num_keywords)
+        raw = _call(self._client, self._model, self._system, user,
+                    self._cfg.max_tokens, self._cfg.temperature)
+        return _parse_guess(raw, self._code_length)
 
 
 class Decoder:
-    def __init__(self, client: OpenAI, cfg: AgentConfig, keywords: list[KeywordPair]):
+    def __init__(
+        self,
+        client: OpenAI,
+        cfg: AgentConfig,
+        backend: str,
+        keywords: list[KeywordPair],
+        code_length: int,
+    ):
         self._client = client
         self._cfg = cfg
-        self._system = prompts.decoder_system(keywords)
+        self._model = _resolve_model(cfg.decoder_model, backend)
+        self._num_keywords = len(keywords)
+        self._code_length = code_length
+        self._system = prompts.decoder_system(keywords, code_length)
 
-    def guess(
-        self, clues: tuple[str, str, str], history: list[RoundRecord]
-    ) -> tuple[int, int, int]:
-        user = prompts.decoder_user(clues, history)
-        raw = _call(
-            self._client, self._cfg.decoder_model, self._system, user,
-            self._cfg.max_tokens, self._cfg.temperature,
-        )
-        return _parse_guess(raw)
+    def guess(self, clues: tuple, history: list[RoundRecord]) -> tuple:
+        user = prompts.decoder_user(clues, history, self._num_keywords)
+        raw = _call(self._client, self._model, self._system, user,
+                    self._cfg.max_tokens, self._cfg.temperature)
+        return _parse_guess(raw, self._code_length)

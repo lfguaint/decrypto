@@ -1,6 +1,9 @@
 # Results
 results*.json
 
+# Article folder (drafts, PDFs, presentations)
+artigo/
+
 # Python
 __pycache__/
 *.py[cod]

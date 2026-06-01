@@ -5,17 +5,17 @@ from typing import Optional
 
 @dataclass
 class KeywordPair:
-    number: int  # 1-4
+    number: int
     word: str
 
 
 @dataclass
 class RoundRecord:
     round_number: int
-    code: tuple[int, int, int]
-    clues: tuple[str, str, str]
-    interceptor_guess: tuple[int, int, int]
-    decoder_guess: tuple[int, int, int]
+    code: tuple            # tuple[int, ...] of length code_length
+    clues: tuple           # tuple[str, ...] of length code_length
+    interceptor_guess: tuple
+    decoder_guess: tuple
 
     @property
     def decoder_correct(self) -> bool:
@@ -60,10 +60,10 @@ class GameResult:
             "rounds": [
                 {
                     "round": r.round_number,
-                    "code": r.code,
-                    "clues": r.clues,
-                    "interceptor_guess": r.interceptor_guess,
-                    "decoder_guess": r.decoder_guess,
+                    "code": list(r.code),
+                    "clues": list(r.clues),
+                    "interceptor_guess": list(r.interceptor_guess),
+                    "decoder_guess": list(r.decoder_guess),
                     "decoder_correct": r.decoder_correct,
                     "interceptor_correct": r.interceptor_correct,
                     "successful": r.transmission_successful,

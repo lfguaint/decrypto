@@ -11,11 +11,11 @@ from models import GameResult
 
 def run_experiment(cfg: ExperimentConfig) -> list[GameResult]:
     rng = random.Random(cfg.seed)
-    client = _make_client()
+    client = _make_client(cfg.backend)
     all_results: list[GameResult] = []
 
     for ks_id in range(1, cfg.num_keyword_sets + 1):
-        keywords = generate_keyword_pairs(rng)
+        keywords = generate_keyword_pairs(cfg.num_keywords, rng)
         kw_str = ", ".join(f"{kp.number}:{kp.word}" for kp in keywords)
         print(f"\n=== Keyword Set {ks_id}/{cfg.num_keyword_sets}: [{kw_str}] ===")
 
