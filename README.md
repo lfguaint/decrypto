@@ -97,20 +97,20 @@ Results are saved to `results.json` by default. Use `--output` to change the pat
 
 Ten models covering the current frontier, mid-tier, and value segments across major providers:
 
-| Shortcut | Model | Provider | Input $/MTok | Output $/MTok |
-|----------|-------|----------|:---:|:---:|
-| `claude-opus` | Claude Opus 4.6 | Anthropic | $5.00 | $25.00 |
-| `claude-haiku` | Claude Haiku 4.5 | Anthropic | $1.00 | $5.00 |
-| `gpt-5.2` | GPT-5.2 | OpenAI | $1.75 | $14.00 |
-| `gpt-5-mini` | GPT-5 Mini | OpenAI | $0.25 | $2.00 |
-| `gemini-pro` | Gemini 2.5 Pro | Google | $1.25 | $10.00 |
-| `grok` | Grok 4 | xAI | $3.00 | $15.00 |
-| `deepseek` | DeepSeek V3.2 | DeepSeek | $0.28 | $0.40 |
-| `llama` | Llama 4 Maverick | Meta | $0.15 | $0.60 |
-| `qwen` | Qwen3 235B A22B | Alibaba | $0.46 | $1.82 |
-| `kimi` | Kimi K2.5 | Moonshot AI | $0.60 | $3.00 |
+| Shortcut | Model | Provider |
+|----------|-------|----------|
+| `claude-opus` | Claude Opus 4.6 | Anthropic |
+| `claude-haiku` | Claude Haiku 4.5 | Anthropic |
+| `gpt-5.2` | GPT-5.2 | OpenAI |
+| `gpt-5-mini` | GPT-5 Mini | OpenAI |
+| `gemini-pro` | Gemini 2.5 Pro | Google |
+| `grok` | Grok 4 | xAI |
+| `deepseek` | DeepSeek V3.2 | DeepSeek |
+| `llama` | Llama 4 Maverick | Meta |
+| `qwen` | Qwen3 235B A22B | Alibaba |
+| `kimi` | Kimi K2.5 | Moonshot AI |
 
-All models are accessed via [OpenRouter](https://openrouter.ai/models). Model IDs and pricing may change — verify at `openrouter.ai/models`.
+All models are accessed via [OpenRouter](https://openrouter.ai/models). Model IDs may change — verify current availability at `openrouter.ai/models`.
 
 ---
 
