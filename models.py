@@ -16,6 +16,7 @@ class RoundRecord:
     clues: tuple           # tuple[str, ...] of length code_length
     interceptor_guess: tuple
     decoder_guess: tuple
+    elapsed_seconds: float = 0.0
 
     @property
     def decoder_correct(self) -> bool:
@@ -35,6 +36,7 @@ class GameResult:
     keyword_set_id: int
     game_id: int
     keywords: list[KeywordPair]
+    prompt_version: int = 1
     rounds: list[RoundRecord] = field(default_factory=list)
 
     @property
@@ -53,6 +55,8 @@ class GameResult:
         return {
             "keyword_set_id": self.keyword_set_id,
             "game_id": self.game_id,
+            "prompt_version": self.prompt_version,
+            "keywords": {kp.number: kp.word for kp in self.keywords},
             "total_rounds": len(self.rounds),
             "successful_transmissions": self.successful_transmissions,
             "decoder_failures": self.decoder_failures,
@@ -67,6 +71,7 @@ class GameResult:
                     "decoder_correct": r.decoder_correct,
                     "interceptor_correct": r.interceptor_correct,
                     "successful": r.transmission_successful,
+                    "elapsed_seconds": round(r.elapsed_seconds, 2),
                 }
                 for r in self.rounds
             ],

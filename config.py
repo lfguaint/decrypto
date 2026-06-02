@@ -69,8 +69,8 @@ class AgentConfig:
     encryptor_model: str = "gpt-oss-20b"
     decoder_model: str = "gpt-oss-20b"
     interceptor_model: str = "gpt-oss-20b"
-    max_tokens: int = 256
     temperature: float = 0.7
+    prompt_version: int = 1   # 1 = baseline; 2 = strategic encryptor
 
 
 @dataclass
@@ -80,7 +80,7 @@ class ExperimentConfig:
     code_length: int = 3               # number of digits per code
     num_keyword_sets: int = 3
     games_per_keyword_set: int = 2
-    rounds_per_game: int = 8
+    rounds_per_game: int = 5
     seed: Optional[int] = None
     agents: AgentConfig = field(default_factory=AgentConfig)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import itertools
 import random
+import time
 
 from openai import OpenAI
 
@@ -30,10 +31,17 @@ def run_game(
     interceptor = Interceptor(client, cfg.agents, cfg.backend, cfg.num_keywords, cfg.code_length)
     decoder = Decoder(client, cfg.agents, cfg.backend, keywords, cfg.code_length)
 
-    result = GameResult(keyword_set_id=keyword_set_id, game_id=game_id, keywords=keywords)
+    result = GameResult(
+        keyword_set_id=keyword_set_id,
+        game_id=game_id,
+        keywords=keywords,
+        prompt_version=cfg.agents.prompt_version,
+    )
+    game_start = time.time()
 
     for round_num, code in enumerate(codes, start=1):
         history = result.rounds[:]
+        round_start = time.time()
 
         print(f"    Round {round_num}/{cfg.rounds_per_game} | code={list(code)}", end="", flush=True)
 
@@ -42,7 +50,9 @@ def run_game(
 
         interceptor_guess = interceptor.guess(clues, history)
         decoder_guess = decoder.guess(clues, history)
-        print(f" | interceptor={list(interceptor_guess)} decoder={list(decoder_guess)}", flush=True)
+
+        elapsed = time.time() - round_start
+        print(f" | interceptor={list(interceptor_guess)} decoder={list(decoder_guess)} | {elapsed:.1f}s", flush=True)
 
         record = RoundRecord(
             round_number=round_num,
@@ -50,7 +60,11 @@ def run_game(
             clues=clues,
             interceptor_guess=interceptor_guess,
             decoder_guess=decoder_guess,
+            elapsed_seconds=time.time() - round_start,
         )
         result.rounds.append(record)
+
+    total = time.time() - game_start
+    print(f"  => game time: {total:.1f}s")
 
     return result

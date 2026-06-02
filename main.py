@@ -30,7 +30,7 @@ def parse_args():
                         help="Number of digits per code (default: 3; must be < num-keywords)")
     parser.add_argument("--keyword-sets", type=int, default=3)
     parser.add_argument("--games-per-set", type=int, default=2)
-    parser.add_argument("--rounds", type=int, default=8,
+    parser.add_argument("--rounds", type=int, default=5,
                         help="Rounds per game (must be < P(num-keywords, code-length))")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
@@ -46,7 +46,8 @@ def parse_args():
         help="Model shortcut or full model ID",
     )
     parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument("--prompt-version", type=int, default=1, choices=[1, 2],
+                        help="Encryptor prompt version: 1=baseline, 2=strategic (default: 1)")
     parser.add_argument("--output", type=str, default="results.json")
     args = parser.parse_args()
 
@@ -54,8 +55,8 @@ def parse_args():
         encryptor_model=args.encryptor_model,
         decoder_model=args.decoder_model,
         interceptor_model=args.interceptor_model,
-        max_tokens=args.max_tokens,
         temperature=args.temperature,
+        prompt_version=args.prompt_version,
     )
     cfg = ExperimentConfig(
         backend=args.backend,
@@ -80,6 +81,7 @@ def main():
     print(f"  Games per set:   {cfg.games_per_keyword_set}")
     print(f"  Rounds per game: {cfg.rounds_per_game}")
     print(f"  Temperature:     {cfg.agents.temperature}")
+    print(f"  Prompt version:  {cfg.agents.prompt_version}")
     print(f"  Encryptor:       {cfg.agents.encryptor_model}")
     print(f"  Decoder:         {cfg.agents.decoder_model}")
     print(f"  Interceptor:     {cfg.agents.interceptor_model}")

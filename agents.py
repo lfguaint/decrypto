@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import random
 import re
 
 from openai import OpenAI
@@ -43,12 +44,14 @@ def _resolve_model(model: str, backend: str) -> str:
     return model
 
 
+MAX_RETRIES = 3
+
+
 def _call(
     client: OpenAI,
     model: str,
     system: str,
     user: str,
-    max_tokens: int,
     temperature: float,
 ) -> str:
     response = client.chat.completions.create(
@@ -57,26 +60,55 @@ def _call(
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        max_tokens=max_tokens,
         temperature=temperature,
     )
     return (response.choices[0].message.content or "").strip()
 
 
 def _parse_json(text: str) -> dict:
+    # Strip markdown code fences and stray backticks
     cleaned = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
+    # Extract first {...} block if the model added surrounding prose
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        cleaned = match.group(0)
     return json.loads(cleaned)
 
 
-def _parse_guess(text: str, code_length: int) -> tuple:
-    data = _parse_json(text)
-    g = data["guess"]
-    return tuple(int(x) for x in g[:code_length])
+def _random_guess(num_keywords: int, code_length: int) -> tuple:
+    return tuple(random.sample(range(1, num_keywords + 1), code_length))
 
 
-def _parse_clues(text: str, code_length: int) -> tuple:
-    data = _parse_json(text)
-    return tuple(str(data[f"clue{i+1}"]) for i in range(code_length))
+def _random_clues(code_length: int) -> tuple:
+    fallbacks = ["thing", "object", "item", "concept", "word"]
+    return tuple(fallbacks[i % len(fallbacks)] for i in range(code_length))
+
+
+def _parse_guess(
+    text: str, code_length: int, num_keywords: int, label: str = ""
+) -> tuple:
+    try:
+        data = _parse_json(text)
+        g = data["guess"]
+        result = tuple(int(x) for x in g[:code_length])
+        # Validate digits are in range and distinct
+        if (len(result) == code_length
+                and all(1 <= d <= num_keywords for d in result)
+                and len(set(result)) == code_length):
+            return result
+        raise ValueError(f"Invalid guess digits: {result}")
+    except Exception as e:
+        print(f" [parse_guess{' '+label if label else ''} fallback: {e}]", end="")
+        return _random_guess(num_keywords, code_length)
+
+
+def _parse_clues(text: str, code_length: int, label: str = "") -> tuple:
+    try:
+        data = _parse_json(text)
+        return tuple(str(data[f"clue{i+1}"]) for i in range(code_length))
+    except Exception as e:
+        print(f" [parse_clues{' '+label if label else ''} fallback: {e}]", end="")
+        return _random_clues(code_length)
 
 
 class Encryptor:
@@ -92,13 +124,13 @@ class Encryptor:
         self._cfg = cfg
         self._model = _resolve_model(cfg.encryptor_model, backend)
         self._code_length = code_length
-        self._system = prompts.encryptor_system(keywords, code_length)
+        self._system = prompts.encryptor_system(keywords, code_length, cfg.prompt_version)
 
     def give_clues(self, code: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.encryptor_user(code, history)
         raw = _call(self._client, self._model, self._system, user,
-                    self._cfg.max_tokens, self._cfg.temperature)
-        return _parse_clues(raw, self._code_length)
+                    self._cfg.temperature)
+        return _parse_clues(raw, self._code_length, label="Enc")
 
 
 class Interceptor:
@@ -120,8 +152,8 @@ class Interceptor:
     def guess(self, clues: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.interceptor_user(clues, history, self._num_keywords)
         raw = _call(self._client, self._model, self._system, user,
-                    self._cfg.max_tokens, self._cfg.temperature)
-        return _parse_guess(raw, self._code_length)
+                    self._cfg.temperature)
+        return _parse_guess(raw, self._code_length, self._num_keywords, label="Int")
 
 
 class Decoder:
@@ -143,5 +175,5 @@ class Decoder:
     def guess(self, clues: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.decoder_user(clues, history, self._num_keywords)
         raw = _call(self._client, self._model, self._system, user,
-                    self._cfg.max_tokens, self._cfg.temperature)
-        return _parse_guess(raw, self._code_length)
+                    self._cfg.temperature)
+        return _parse_guess(raw, self._code_length, self._num_keywords, label="Dec")
