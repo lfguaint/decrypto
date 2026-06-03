@@ -45,7 +45,16 @@ def parse_args():
         "--interceptor-model", type=str, default="gpt-oss-20b",
         help="Model shortcut or full model ID",
     )
-    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--temperature", type=float, default=0.7,
+                        help="Default temperature for all agents (default: 0.7)")
+    parser.add_argument("--encryptor-temperature", type=float, default=None,
+                        help="Temperature for Encryptor (overrides --temperature)")
+    parser.add_argument("--decoder-temperature", type=float, default=None,
+                        help="Temperature for Decoder (overrides --temperature)")
+    parser.add_argument("--interceptor-temperature", type=float, default=None,
+                        help="Temperature for Interceptor (overrides --temperature)")
+    parser.add_argument("--max-tokens", type=int, default=None,
+                        help="Max output tokens per call (default: no limit)")
     parser.add_argument("--prompt-version", type=int, default=1, choices=[1, 2],
                         help="Encryptor prompt version: 1=baseline, 2=strategic (default: 1)")
     parser.add_argument("--output", type=str, default="results.json")
@@ -55,7 +64,10 @@ def parse_args():
         encryptor_model=args.encryptor_model,
         decoder_model=args.decoder_model,
         interceptor_model=args.interceptor_model,
-        temperature=args.temperature,
+        encryptor_temperature=args.encryptor_temperature or args.temperature,
+        decoder_temperature=args.decoder_temperature or args.temperature,
+        interceptor_temperature=args.interceptor_temperature or args.temperature,
+        max_tokens=args.max_tokens,
         prompt_version=args.prompt_version,
     )
     cfg = ExperimentConfig(
@@ -80,7 +92,8 @@ def main():
     print(f"  Keyword sets:    {cfg.num_keyword_sets}")
     print(f"  Games per set:   {cfg.games_per_keyword_set}")
     print(f"  Rounds per game: {cfg.rounds_per_game}")
-    print(f"  Temperature:     {cfg.agents.temperature}")
+    print(f"  Temperature:     enc={cfg.agents.encryptor_temperature}  dec={cfg.agents.decoder_temperature}  int={cfg.agents.interceptor_temperature}")
+    print(f"  Max tokens:      {cfg.agents.max_tokens or 'no limit'}")
     print(f"  Prompt version:  {cfg.agents.prompt_version}")
     print(f"  Encryptor:       {cfg.agents.encryptor_model}")
     print(f"  Decoder:         {cfg.agents.decoder_model}")

@@ -35,6 +35,7 @@ BACKEND_SETTINGS = {
 
 OLLAMA_MODELS = {
     "gpt-oss-20b": "gpt-oss:20b",
+    "qwen3-8b":    "qwen3:8b",
 }
 
 
@@ -69,8 +70,11 @@ class AgentConfig:
     encryptor_model: str = "gpt-oss-20b"
     decoder_model: str = "gpt-oss-20b"
     interceptor_model: str = "gpt-oss-20b"
-    temperature: float = 0.7
-    prompt_version: int = 1   # 1 = baseline; 2 = strategic encryptor
+    encryptor_temperature: float = 0.7
+    decoder_temperature: float = 0.7
+    interceptor_temperature: float = 0.7
+    max_tokens: int | None = None   # None = no limit (model default)
+    prompt_version: int = 1         # 1 = baseline; 2 = strategic encryptor
 
 
 @dataclass

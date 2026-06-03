@@ -53,8 +53,9 @@ def _call(
     system: str,
     user: str,
     temperature: float,
+    max_tokens: int | None = None,
 ) -> str:
-    response = client.chat.completions.create(
+    kwargs: dict = dict(
         model=model,
         messages=[
             {"role": "system", "content": system},
@@ -62,6 +63,9 @@ def _call(
         ],
         temperature=temperature,
     )
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    response = client.chat.completions.create(**kwargs)
     return (response.choices[0].message.content or "").strip()
 
 
@@ -129,7 +133,7 @@ class Encryptor:
     def give_clues(self, code: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.encryptor_user(code, history)
         raw = _call(self._client, self._model, self._system, user,
-                    self._cfg.temperature)
+                    self._cfg.encryptor_temperature, self._cfg.max_tokens)
         return _parse_clues(raw, self._code_length, label="Enc")
 
 
@@ -152,7 +156,7 @@ class Interceptor:
     def guess(self, clues: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.interceptor_user(clues, history, self._num_keywords)
         raw = _call(self._client, self._model, self._system, user,
-                    self._cfg.temperature)
+                    self._cfg.interceptor_temperature, self._cfg.max_tokens)
         return _parse_guess(raw, self._code_length, self._num_keywords, label="Int")
 
 
@@ -175,5 +179,5 @@ class Decoder:
     def guess(self, clues: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.decoder_user(clues, history, self._num_keywords)
         raw = _call(self._client, self._model, self._system, user,
-                    self._cfg.temperature)
+                    self._cfg.decoder_temperature, self._cfg.max_tokens)
         return _parse_guess(raw, self._code_length, self._num_keywords, label="Dec")
