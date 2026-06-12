@@ -124,6 +124,30 @@ def encryptor_system(
     return _encryptor_system_v1(keywords, code_length)
 
 
+# ---------------------------------------------------------------------------
+# Encryptor — custom template (used by prompt optimization, e.g. GEPA)
+# ---------------------------------------------------------------------------
+# Placeholders (literal tokens, replaced via str.replace so stray braces in
+# the template body are harmless):
+#   {num_keywords}   number of keyword cards
+#   {keywords_block} the numbered keyword list
+#   {code_length}    digits per code
+#   {example_code}   e.g. "4-2-3"
+#   {json_format}    required JSON response format
+
+def render_encryptor_template(
+    template: str, keywords: list[KeywordPair], code_length: int
+) -> str:
+    num_keywords = len(keywords)
+    out = template
+    out = out.replace("{num_keywords}", str(num_keywords))
+    out = out.replace("{keywords_block}", _format_keywords(keywords))
+    out = out.replace("{code_length}", str(code_length))
+    out = out.replace("{example_code}", _example_code(num_keywords, code_length))
+    out = out.replace("{json_format}", _clue_json_format(code_length))
+    return out
+
+
 def encryptor_user(code: tuple, history: list[RoundRecord]) -> str:
     code_str = "-".join(str(d) for d in code)
     return f"""\

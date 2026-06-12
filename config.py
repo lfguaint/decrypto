@@ -47,14 +47,19 @@ OLLAMA_MODELS = {
 OPENROUTER_MODELS = {
     "claude-opus":  "anthropic/claude-opus-4.6",
     "claude-haiku": "anthropic/claude-haiku-4.5",
-    "gpt-5.2":      "openai/gpt-5.2",
-    "gpt-5-mini":   "openai/gpt-5-mini",
-    "gemini-pro":   "google/gemini-2.5-pro",
-    "grok":         "x-ai/grok-4",
-    "deepseek":     "deepseek/deepseek-v3.2",
+    "gpt-5.4":      "openai/gpt-5.4",        # $2.50/$15.00 — Mar 2026
+    "gpt-5.4-mini": "openai/gpt-5.4-mini",   # $0.75/$4.50  — Mar 2026
+    "gemini":       "google/gemini-3.5-flash",     # $1.50/$9.00 — May 2026
+    "grok":         "x-ai/grok-4.3",         # $1.25/$2.50 — Apr 2026
+    "deepseek":       "deepseek/deepseek-v4-pro",    # $0.44/$0.87 — Apr 2026
+    "deepseek-flash": "deepseek/deepseek-v4-flash",  # $0.10/$0.20 — Apr 2026
     "llama":        "meta-llama/llama-4-maverick",
-    "qwen":         "qwen/qwen3-235b-a22b",
-    "kimi":         "moonshotai/kimi-k2.5",
+    "qwen":         "qwen/qwen3.5-397b-a17b",      # $0.60/$3.60 — open-weights
+    "kimi":         "moonshotai/kimi-k2.6",        # $0.68/$3.41 — Apr 2026
+    "glm":          "z-ai/glm-5",                  # $0.60/$1.92 — Feb 2026, open-weights
+    "gpt-oss":      "openai/gpt-oss-120b",         # ~$0.18/$0.80 — OpenAI open-weights
+    "gemma":        "google/gemma-4-31b-it",       # $0.12/$0.35 — Google open-weights
+    "minimax":      "minimax/minimax-m3",          # $0.30/$1.20 — MiniMax
 }
 
 # Combined shortcut registry (Ollama shortcuts take precedence when using Ollama)
@@ -70,11 +75,12 @@ class AgentConfig:
     encryptor_model: str = "gpt-oss-20b"
     decoder_model: str = "gpt-oss-20b"
     interceptor_model: str = "gpt-oss-20b"
-    encryptor_temperature: float = 0.7
-    decoder_temperature: float = 0.7
-    interceptor_temperature: float = 0.7
+    encryptor_temperature: float | None = None    # None = provider default
+    decoder_temperature: float | None = None
+    interceptor_temperature: float | None = None
     max_tokens: int | None = None   # None = no limit (model default)
     prompt_version: int = 1         # 1 = baseline; 2 = strategic encryptor
+    encryptor_system_template: str | None = None  # custom template (GEPA); overrides prompt_version
 
 
 @dataclass

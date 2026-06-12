@@ -17,6 +17,9 @@ class RoundRecord:
     interceptor_guess: tuple
     decoder_guess: tuple
     elapsed_seconds: float = 0.0
+    encryptor_fallback: bool = False    # parser fell back to random clues
+    interceptor_fallback: bool = False  # parser fell back to random guess
+    decoder_fallback: bool = False      # parser fell back to random guess
 
     @property
     def decoder_correct(self) -> bool:
@@ -37,6 +40,7 @@ class GameResult:
     game_id: int
     keywords: list[KeywordPair]
     prompt_version: int = 1
+    total_seconds: float = 0.0
     rounds: list[RoundRecord] = field(default_factory=list)
 
     @property
@@ -72,6 +76,9 @@ class GameResult:
                     "interceptor_correct": r.interceptor_correct,
                     "successful": r.transmission_successful,
                     "elapsed_seconds": round(r.elapsed_seconds, 2),
+                    "encryptor_fallback": r.encryptor_fallback,
+                    "interceptor_fallback": r.interceptor_fallback,
+                    "decoder_fallback": r.decoder_fallback,
                 }
                 for r in self.rounds
             ],

@@ -59,14 +59,32 @@ WORD_LIST = [
 ]
 
 
+_MAX_REDRAWS = 1000
+
+
 def generate_keyword_pairs(
     num_keywords: int = 4,
     rng: random.Random | None = None,
+    seen: set | None = None,
 ) -> list[KeywordPair]:
+    """Draw a keyword set. If `seen` is provided, guarantees the set of words
+    (regardless of numbering) was never drawn before, and registers it."""
     if num_keywords > len(WORD_LIST):
         raise ValueError(
             f"num_keywords ({num_keywords}) exceeds vocabulary size ({len(WORD_LIST)})."
         )
     r = rng or random.Random()
-    words = r.sample(WORD_LIST, num_keywords)
+    for _ in range(_MAX_REDRAWS):
+        words = r.sample(WORD_LIST, num_keywords)
+        key = frozenset(words)
+        if seen is None:
+            break
+        if key not in seen:
+            seen.add(key)
+            break
+    else:
+        raise RuntimeError(
+            f"Could not draw a new unique keyword set after {_MAX_REDRAWS} attempts "
+            f"({len(seen)} sets already drawn)."
+        )
     return [KeywordPair(number=i + 1, word=word) for i, word in enumerate(words)]

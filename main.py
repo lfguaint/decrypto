@@ -45,8 +45,8 @@ def parse_args():
         "--interceptor-model", type=str, default="gpt-oss-20b",
         help="Model shortcut or full model ID",
     )
-    parser.add_argument("--temperature", type=float, default=0.7,
-                        help="Default temperature for all agents (default: 0.7)")
+    parser.add_argument("--temperature", type=float, default=None,
+                        help="Temperature for all agents (default: provider default, parameter omitted)")
     parser.add_argument("--encryptor-temperature", type=float, default=None,
                         help="Temperature for Encryptor (overrides --temperature)")
     parser.add_argument("--decoder-temperature", type=float, default=None,
@@ -57,16 +57,24 @@ def parse_args():
                         help="Max output tokens per call (default: no limit)")
     parser.add_argument("--prompt-version", type=int, default=1, choices=[1, 2],
                         help="Encryptor prompt version: 1=baseline, 2=strategic (default: 1)")
-    parser.add_argument("--output", type=str, default="results.json")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Concurrent games (1 = sequential with per-round logs)")
+    parser.add_argument("--db", type=str, default="results/decrypto.db",
+                        help="SQLite database path (default: results/decrypto.db)")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Optional JSON export path (DB is always written)")
     args = parser.parse_args()
 
     agents = AgentConfig(
         encryptor_model=args.encryptor_model,
         decoder_model=args.decoder_model,
         interceptor_model=args.interceptor_model,
-        encryptor_temperature=args.encryptor_temperature or args.temperature,
-        decoder_temperature=args.decoder_temperature or args.temperature,
-        interceptor_temperature=args.interceptor_temperature or args.temperature,
+        encryptor_temperature=(args.encryptor_temperature
+                               if args.encryptor_temperature is not None else args.temperature),
+        decoder_temperature=(args.decoder_temperature
+                             if args.decoder_temperature is not None else args.temperature),
+        interceptor_temperature=(args.interceptor_temperature
+                                 if args.interceptor_temperature is not None else args.temperature),
         max_tokens=args.max_tokens,
         prompt_version=args.prompt_version,
     )
@@ -80,11 +88,11 @@ def parse_args():
         seed=args.seed,
         agents=agents,
     )
-    return cfg, args.output
+    return cfg, args.db, args.output, args.workers
 
 
 def main():
-    cfg, output_path = parse_args()
+    cfg, db_path, output_path, workers = parse_args()
     print("Decrypto benchmark starting...")
     print(f"  Backend:         {cfg.backend}")
     print(f"  Keywords:        {cfg.num_keywords}  (codes: 1–{cfg.num_keywords})")
@@ -92,15 +100,18 @@ def main():
     print(f"  Keyword sets:    {cfg.num_keyword_sets}")
     print(f"  Games per set:   {cfg.games_per_keyword_set}")
     print(f"  Rounds per game: {cfg.rounds_per_game}")
-    print(f"  Temperature:     enc={cfg.agents.encryptor_temperature}  dec={cfg.agents.decoder_temperature}  int={cfg.agents.interceptor_temperature}")
+    def _t(v):
+        return "default" if v is None else v
+    print(f"  Temperature:     enc={_t(cfg.agents.encryptor_temperature)}  dec={_t(cfg.agents.decoder_temperature)}  int={_t(cfg.agents.interceptor_temperature)}")
     print(f"  Max tokens:      {cfg.agents.max_tokens or 'no limit'}")
     print(f"  Prompt version:  {cfg.agents.prompt_version}")
     print(f"  Encryptor:       {cfg.agents.encryptor_model}")
     print(f"  Decoder:         {cfg.agents.decoder_model}")
     print(f"  Interceptor:     {cfg.agents.interceptor_model}")
 
-    results = run_experiment(cfg)
-    save_results(results, output_path)
+    results = run_experiment(cfg, db_path, workers)
+    if output_path:
+        save_results(results, output_path)
 
     total_rounds = sum(len(r.rounds) for r in results)
     total_success = sum(r.successful_transmissions for r in results)

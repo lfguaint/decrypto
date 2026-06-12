@@ -18,6 +18,7 @@ def _make_client(backend: str) -> OpenAI:
         return OpenAI(
             base_url=settings["base_url"],
             api_key=settings["api_key"],
+            max_retries=5,
         )
 
     if backend == Backend.OPENROUTER:
@@ -31,6 +32,7 @@ def _make_client(backend: str) -> OpenAI:
             base_url=settings["base_url"],
             api_key=api_key,
             default_headers=settings["default_headers"],
+            max_retries=5,   # exponential backoff on 429/5xx
         )
 
     raise ValueError(f"Unknown backend: {backend!r}. Use 'ollama' or 'openrouter'.")
@@ -52,7 +54,7 @@ def _call(
     model: str,
     system: str,
     user: str,
-    temperature: float,
+    temperature: float | None,
     max_tokens: int | None = None,
 ) -> str:
     kwargs: dict = dict(
@@ -61,8 +63,9 @@ def _call(
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        temperature=temperature,
     )
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
     response = client.chat.completions.create(**kwargs)
@@ -91,6 +94,7 @@ def _random_clues(code_length: int) -> tuple:
 def _parse_guess(
     text: str, code_length: int, num_keywords: int, label: str = ""
 ) -> tuple:
+    """Returns ((digits...), fallback_used)."""
     try:
         data = _parse_json(text)
         g = data["guess"]
@@ -99,20 +103,21 @@ def _parse_guess(
         if (len(result) == code_length
                 and all(1 <= d <= num_keywords for d in result)
                 and len(set(result)) == code_length):
-            return result
+            return result, False
         raise ValueError(f"Invalid guess digits: {result}")
     except Exception as e:
         print(f" [parse_guess{' '+label if label else ''} fallback: {e}]", end="")
-        return _random_guess(num_keywords, code_length)
+        return _random_guess(num_keywords, code_length), True
 
 
 def _parse_clues(text: str, code_length: int, label: str = "") -> tuple:
+    """Returns ((clues...), fallback_used)."""
     try:
         data = _parse_json(text)
-        return tuple(str(data[f"clue{i+1}"]) for i in range(code_length))
+        return tuple(str(data[f"clue{i+1}"]) for i in range(code_length)), False
     except Exception as e:
         print(f" [parse_clues{' '+label if label else ''} fallback: {e}]", end="")
-        return _random_clues(code_length)
+        return _random_clues(code_length), True
 
 
 class Encryptor:
@@ -128,7 +133,11 @@ class Encryptor:
         self._cfg = cfg
         self._model = _resolve_model(cfg.encryptor_model, backend)
         self._code_length = code_length
-        self._system = prompts.encryptor_system(keywords, code_length, cfg.prompt_version)
+        if cfg.encryptor_system_template:
+            self._system = prompts.render_encryptor_template(
+                cfg.encryptor_system_template, keywords, code_length)
+        else:
+            self._system = prompts.encryptor_system(keywords, code_length, cfg.prompt_version)
 
     def give_clues(self, code: tuple, history: list[RoundRecord]) -> tuple:
         user = prompts.encryptor_user(code, history)

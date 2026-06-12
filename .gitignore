@@ -1,5 +1,5 @@
-# Results
-results*.json
+# Results (JSON exports and SQLite database)
+results/
 
 # Article folder (drafts, PDFs, presentations)
 artigo/
