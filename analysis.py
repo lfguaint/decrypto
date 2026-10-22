@@ -94,6 +94,37 @@ def survival_no_interception(
     return out
 
 
+def interceptor_win_rounds(
+    conn: sqlite3.Connection,
+    experiment_id: int,
+    count_round1_interception: bool,
+    horizon: int,
+    tokens_to_win: int = 2,
+) -> list:
+    """Post-hoc 3-player win rule: each interception and each decoder miss gives
+    the Interceptor a token. Per game: round the Interceptor reached
+    `tokens_to_win` within `horizon`, or None if the Encryptor team held."""
+    rows = conn.execute("""
+        SELECT g.id, r.round_number, r.interceptor_correct, r.decoder_correct
+        FROM rounds r JOIN games g ON r.game_id = g.id
+        WHERE g.experiment_id = ? AND r.round_number <= ?
+        ORDER BY g.id, r.round_number
+    """, (experiment_id, horizon)).fetchall()
+
+    decided: dict = {}
+    tokens: dict = {}
+    for game_id, rnd, intercepted, decoded in rows:
+        decided.setdefault(game_id, None)
+        if decided[game_id] is not None:
+            continue
+        # The rulebook forbids interception in round 1; decoder misses still count.
+        interception_token = intercepted if (rnd > 1 or count_round1_interception) else 0
+        tokens[game_id] = tokens.get(game_id, 0) + interception_token + (1 - decoded)
+        if tokens[game_id] >= tokens_to_win:
+            decided[game_id] = rnd
+    return list(decided.values())
+
+
 def fallback_rates(conn: sqlite3.Connection, experiment_id: int) -> tuple:
     row = conn.execute("""
         SELECT COUNT(*),
@@ -140,6 +171,20 @@ def report(db_path: str, experiment_id: int | None, exclude_fallbacks: bool) -> 
     print(f"{'round':>5}  {'alive':>5}  {'rate':>22}")
     for t, alive, n in survival_no_interception(conn, experiment_id):
         print(f"{t:>5}  {alive:>5}  {_fmt(alive, n):>22}")
+
+    max_round = conn.execute("""
+        SELECT MAX(r.round_number) FROM rounds r JOIN games g ON r.game_id = g.id
+        WHERE g.experiment_id = ?
+    """, (experiment_id,)).fetchone()[0] or 0
+    horizon = min(5, max_round)
+    print(f"\nWin condition, post hoc (3-player rule: Interceptor needs 2 tokens by round {horizon})")
+    print(f"{'variant':<28} {'Interceptor wins':>22}  decided by round 1..{horizon}")
+    for label, count_r1 in (("R1 interception counts", True), ("rulebook: no R1 intercept", False)):
+        decided = interceptor_win_rounds(conn, experiment_id, count_r1, horizon)
+        n = len(decided)
+        wins = sum(1 for d in decided if d is not None)
+        by_round = [sum(1 for d in decided if d is not None and d <= t) for t in range(1, horizon + 1)]
+        print(f"{label:<28} {_fmt(wins, n):>22}  {by_round}")
 
     n, enc_fb, int_fb, dec_fb = fallback_rates(conn, experiment_id)
     print(f"\nFallback rates over {n} rounds: "
