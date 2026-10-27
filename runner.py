@@ -199,11 +199,12 @@ def _play(conn, experiment_id: int, cfg: ExperimentConfig, tasks: list, workers:
         pool.shutdown(wait=True)
     elapsed_min = (time.time() - t0) / 60
     state = {CANCEL: "CANCELLED", PAUSE: "PAUSED"}.get(stop["request"], "Done") if pending else "Done"
+    queued = len(storage.queued_games(conn, experiment_id))  # whole queue, not only this run's tasks
     print(f"\n{state}: {completed} games saved, {aborted + failed} errors ({aborted} invalid responses, "
-          f"{failed} API) | {len(pending)} still queued | {elapsed_min:.1f} min | reported cost ${spent:.4f}")
+          f"{failed} API) | {queued} still queued | {elapsed_min:.1f} min | reported cost ${spent:.4f}")
     if invalid:
         print(f"{invalid} invalid responses logged to {log_path}")
-    if pending or aborted or failed:
+    if queued or aborted or failed:
         print(f"Resume (queued and errored games) with --retry-experiment {experiment_id}")
     return all_results
 

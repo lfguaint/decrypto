@@ -25,10 +25,11 @@ class CallRecord:
     completion_tokens: Optional[int] = None
     reasoning_tokens: Optional[int] = None
     cost: Optional[float] = None
+    started_at: Optional[str] = None  # local time the (successful) request was sent, ms precision
     elapsed_seconds: float = 0.0
     content: str = ""
     reasoning: Optional[str] = None
-    attempt: int = 1                 # 1..MAX_ATTEMPTS within the same game stage
+    attempt: int = 1                # 1..MAX_ATTEMPTS within the same game stage
     status: str = "ok"               # ok | format_error | rule_violation
     error: Optional[str] = None
 

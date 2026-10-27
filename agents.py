@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 
 import openai
 from openai import OpenAI
@@ -75,9 +76,10 @@ def _extra(obj) -> dict:
 def _create_with_retries(client: OpenAI, kwargs: dict):
     """Retry transient failures with exponential backoff; a timeout is raised at once."""
     for attempt in range(TRANSIENT_RETRIES + 1):
+        started_at = datetime.now().isoformat(timespec="milliseconds")
         t0 = time.time()
         try:
-            return client.chat.completions.create(**kwargs), time.time() - t0
+            return client.chat.completions.create(**kwargs), time.time() - t0, started_at
         except openai.APITimeoutError:
             raise  # longer than REQUEST_TIMEOUT_S: do not pay for it again
         except (openai.RateLimitError, openai.InternalServerError, openai.APIConnectionError):
@@ -111,7 +113,7 @@ def _call(
             "usage": {"include": True},  # ask OpenRouter to report cost
             "provider": openrouter_routing(model),
         }
-    response, elapsed = _create_with_retries(client, kwargs)
+    response, elapsed, started_at = _create_with_retries(client, kwargs)
     message = response.choices[0].message
     content = (message.content or "").strip()
     usage = response.usage
@@ -125,6 +127,7 @@ def _call(
         completion_tokens=getattr(usage, "completion_tokens", None),
         reasoning_tokens=getattr(details, "reasoning_tokens", None),
         cost=_extra(usage).get("cost"),
+        started_at=started_at,
         elapsed_seconds=elapsed,
         content=content,
         reasoning=_extra(message).get("reasoning"),

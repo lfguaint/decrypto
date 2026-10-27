@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS calls (
     completion_tokens INTEGER,
     reasoning_tokens INTEGER,
     cost REAL,
+    started_at TEXT,
     elapsed_seconds REAL,
     content TEXT NOT NULL,
     reasoning TEXT,
@@ -281,6 +282,8 @@ def _ensure_write_schema(conn: sqlite3.Connection) -> None:
         if not _has_column(conn, "experiments", column):
             conn.execute(f"ALTER TABLE experiments ADD COLUMN {column} {sql_type}")
     conn.executescript(CALLS_SCHEMA)
+    if not _has_column(conn, "calls", "started_at"):
+        conn.execute("ALTER TABLE calls ADD COLUMN started_at TEXT")
 
 
 def insert_experiment(conn: sqlite3.Connection, cfg: ExperimentConfig) -> int:
@@ -369,12 +372,12 @@ def insert_game(conn: sqlite3.Connection, experiment_id: int, result: GameResult
             """INSERT INTO calls (
                 round_id, agent, model_requested, model_served, provider, response_id,
                 prompt_tokens, completion_tokens, reasoning_tokens, cost,
-                elapsed_seconds, content, reasoning, attempt, status, error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                started_at, elapsed_seconds, content, reasoning, attempt, status, error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (round_id, agent, c.model_requested, c.model_served, c.provider, c.response_id,
                  c.prompt_tokens, c.completion_tokens, c.reasoning_tokens, c.cost,
-                 c.elapsed_seconds, c.content, c.reasoning, c.attempt, c.status, c.error)
+                 c.started_at, c.elapsed_seconds, c.content, c.reasoning, c.attempt, c.status, c.error)
                 for agent, c in r.calls
             ],
         )
