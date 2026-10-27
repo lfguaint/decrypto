@@ -96,15 +96,17 @@ OPENROUTER_MODELS = {
 # Each model is served by one pinned OpenRouter provider, never routed elsewhere,
 # and the pin stays fixed for the whole benchmark even if prices change. Rule: the
 # developer's own provider when OpenRouter offers it, otherwise a provider at fp8 or
-# higher precision, chosen per model (the reference DeepSeek V4 Flash is on DeepInfra
-# for its stable pricing, 2026-10-27). Quantization is pinned where reported.
+# higher precision, chosen per model. The reference DeepSeek V4 Flash is on StreamLake
+# (2026-10-27): DeepInfra's shared pool returned 429 at 8 concurrent games, while
+# StreamLake served 16 concurrent calls; it also serves DeepSeek V4 Pro.
+# Quantization is pinned where reported.
 # Providers of the other models are still to be reviewed one by one; service tiers
 # (flex/standard/priority) of OpenAI, Google AI Studio and DeepInfra-Gemma are not pinned yet.
 OPENROUTER_PROVIDERS = {
     "google/gemma-4-31b-it":      {"provider": "deepinfra", "quantization": "fp8"},
     "openai/gpt-oss-120b":        {"provider": "deepinfra", "quantization": "bf16"},
     "qwen/qwen3-32b":             {"provider": "deepinfra", "quantization": "fp8"},
-    "deepseek/deepseek-v4-flash": {"provider": "deepinfra", "quantization": "fp8"},
+    "deepseek/deepseek-v4-flash": {"provider": "streamlake", "quantization": "fp8"},
     "deepseek/deepseek-v4-pro":   {"provider": "streamlake", "quantization": "fp8"},
     "moonshotai/kimi-k3":         {"provider": "moonshotai"},
     "google/gemini-2.5-flash":    {"provider": "google-ai-studio"},
