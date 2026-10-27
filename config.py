@@ -114,6 +114,14 @@ OPENROUTER_PROVIDERS = {
 }
 
 
+# A call that runs longer than this is cut and not retried: the game is marked as an
+# error and requeued on resume (cutting may not stop provider billing; the provider's
+# max output tokens is what bounds the cost of one call).
+REQUEST_TIMEOUT_S = 1800
+# Transient failures (429, 5xx, dropped connection) are retried with backoff.
+TRANSIENT_RETRIES = 5
+
+
 def openrouter_routing(model_id: str) -> dict:
     """OpenRouter `provider` request field pinning `model_id` to its provider."""
     pin = OPENROUTER_PROVIDERS.get(model_id)

@@ -4,9 +4,10 @@ import os
 import re
 import time
 
+import openai
 from openai import OpenAI
 
-from config import (AgentConfig, Backend, BACKEND_SETTINGS,
+from config import (AgentConfig, Backend, BACKEND_SETTINGS, REQUEST_TIMEOUT_S, TRANSIENT_RETRIES,
                     OLLAMA_MODELS, OPENROUTER_MODELS, DGX_MODELS, openrouter_routing)
 from models import CallRecord, KeywordPair, RoundRecord, count_multiword
 import prompts
@@ -19,7 +20,8 @@ def _make_client(backend: str) -> OpenAI:
         return OpenAI(
             base_url=settings["base_url"],
             api_key=settings["api_key"],
-            max_retries=5,
+            max_retries=0,          # retries are handled in _call
+            timeout=REQUEST_TIMEOUT_S,
         )
 
     if backend == Backend.CLUSTER:
@@ -32,7 +34,8 @@ def _make_client(backend: str) -> OpenAI:
         return OpenAI(
             base_url=settings["base_url"],
             api_key=api_key,
-            max_retries=5,
+            max_retries=0,          # retries are handled in _call
+            timeout=REQUEST_TIMEOUT_S,
         )
 
     if backend == Backend.OPENROUTER:
@@ -46,7 +49,8 @@ def _make_client(backend: str) -> OpenAI:
             base_url=settings["base_url"],
             api_key=api_key,
             default_headers=settings["default_headers"],
-            max_retries=5,
+            max_retries=0,          # retries are handled in _call
+            timeout=REQUEST_TIMEOUT_S,
         )
 
     raise ValueError(f"Unknown backend: {backend!r}.")
@@ -62,12 +66,24 @@ def _resolve_model(model: str, backend: str) -> str:
     return model
 
 
-MAX_RETRIES = 3
-
 
 def _extra(obj) -> dict:
     """Provider-specific fields the OpenAI SDK keeps outside its typed schema."""
     return (getattr(obj, "model_extra", None) or {}) if obj is not None else {}
+
+
+def _create_with_retries(client: OpenAI, kwargs: dict):
+    """Retry transient failures with exponential backoff; a timeout is raised at once."""
+    for attempt in range(TRANSIENT_RETRIES + 1):
+        t0 = time.time()
+        try:
+            return client.chat.completions.create(**kwargs), time.time() - t0
+        except openai.APITimeoutError:
+            raise  # longer than REQUEST_TIMEOUT_S: do not pay for it again
+        except (openai.RateLimitError, openai.InternalServerError, openai.APIConnectionError):
+            if attempt == TRANSIENT_RETRIES:
+                raise
+            time.sleep(min(60, 2 ** attempt))
 
 
 def _call(
@@ -95,9 +111,7 @@ def _call(
             "usage": {"include": True},  # ask OpenRouter to report cost
             "provider": openrouter_routing(model),
         }
-    t0 = time.time()
-    response = client.chat.completions.create(**kwargs)
-    elapsed = time.time() - t0
+    response, elapsed = _create_with_retries(client, kwargs)
     message = response.choices[0].message
     content = (message.content or "").strip()
     usage = response.usage
