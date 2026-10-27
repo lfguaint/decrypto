@@ -50,10 +50,21 @@ def run_game(
     dec_backend = _agent_backend(cfg.agents.decoder_backend, cfg.backend)
     int_backend = _agent_backend(cfg.agents.interceptor_backend, cfg.backend)
 
-    encryptor = Encryptor(_make_client(enc_backend), cfg.agents, enc_backend, keywords, cfg.code_length)
-    interceptor = Interceptor(_make_client(int_backend), cfg.agents, int_backend, cfg.num_keywords, cfg.code_length)
-    decoder = Decoder(_make_client(dec_backend), cfg.agents, dec_backend, keywords, cfg.code_length)
+    # One client per backend, closed when the game ends; unclosed clients leaked one
+    # CLOSE_WAIT socket each, which can exhaust a low open-files limit over many games.
+    clients = {b: _make_client(b) for b in {enc_backend, dec_backend, int_backend}}
+    try:
+        return _play_rounds(cfg, keywords, keyword_set_id, game_id, codes, verbose,
+                            Encryptor(clients[enc_backend], cfg.agents, enc_backend, keywords, cfg.code_length),
+                            Interceptor(clients[int_backend], cfg.agents, int_backend, cfg.num_keywords, cfg.code_length),
+                            Decoder(clients[dec_backend], cfg.agents, dec_backend, keywords, cfg.code_length))
+    finally:
+        for client in clients.values():
+            client.close()
 
+
+def _play_rounds(cfg, keywords, keyword_set_id, game_id, codes, verbose,
+                 encryptor, interceptor, decoder) -> GameResult:
     result = GameResult(
         keyword_set_id=keyword_set_id,
         game_id=game_id,

@@ -144,7 +144,9 @@ def _parse_json(text: str) -> dict:
     cleaned = cleaned.strip()
     # Strip markdown code fences and stray backticks
     cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip().rstrip("`").strip()
-    # Extract first {...} block if the model added surrounding prose
+    # The span from the first "{" to the last "}" must be ONE JSON object: prose around it
+    # is tolerated, but a response holding several objects (a model drafting and changing
+    # its mind) is rejected and resent, instead of guessing which draft is the answer.
     match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if match:
         cleaned = match.group(0)

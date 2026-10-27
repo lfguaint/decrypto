@@ -1,9 +1,13 @@
 from __future__ import annotations
 import argparse
+import json
 import math
+import random
 import sqlite3
+from collections import Counter
 
-import storage
+PERMUTATIONS = 10_000
+PERMUTATION_SEED = 0
 
 
 # ---------------------------------------------------------------------------
@@ -29,17 +33,13 @@ def _fmt(k: int, n: int) -> str:
     return f"{100*p:5.1f}% [{100*lo:.1f}, {100*hi:.1f}]"
 
 
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
 # ---------------------------------------------------------------------------
 # Queries
 # ---------------------------------------------------------------------------
-
-def _fallback_filter(exclude_fallbacks: bool) -> str:
-    if exclude_fallbacks:
-        return ("AND r.encryptor_fallback = 0 "
-                "AND r.interceptor_fallback = 0 "
-                "AND r.decoder_fallback = 0")
-    return ""
-
 
 def list_experiments(conn: sqlite3.Connection) -> list:
     return conn.execute("""
@@ -51,26 +51,53 @@ def list_experiments(conn: sqlite3.Connection) -> list:
     """).fetchall()
 
 
-def per_round_outcomes(
-    conn: sqlite3.Connection, experiment_id: int, exclude_fallbacks: bool = False
-) -> list:
-    """Per round: (round, n, successes, interceptions, decoder_failures)."""
-    return conn.execute(f"""
-        SELECT r.round_number,
-               COUNT(*) AS n,
-               SUM(r.successful) AS s,
-               SUM(r.interceptor_correct) AS i,
-               SUM(1 - r.decoder_correct) AS f
-        FROM rounds r
-        JOIN games g ON r.game_id = g.id
-        WHERE g.experiment_id = ? {_fallback_filter(exclude_fallbacks)}
+def chance_rate(conn: sqlite3.Connection, experiment_id: int) -> float:
+    """1 / number of possible codes: the hit rate of any guess independent of the code."""
+    n, k = conn.execute("SELECT num_keywords, code_length FROM experiments WHERE id = ?",
+                        (experiment_id,)).fetchone()
+    return 1 / math.perm(n, k)
+
+
+def per_round_outcomes(conn: sqlite3.Connection, experiment_id: int) -> list:
+    """Per round: (round, n, S, I with decoder right, I with decoder wrong, F)."""
+    return conn.execute("""
+        SELECT r.round_number, COUNT(*),
+               SUM(r.decoder_correct AND NOT r.interceptor_correct),
+               SUM(r.interceptor_correct AND r.decoder_correct),
+               SUM(r.interceptor_correct AND NOT r.decoder_correct),
+               SUM(NOT r.decoder_correct AND NOT r.interceptor_correct)
+        FROM rounds r JOIN games g ON r.game_id = g.id
+        WHERE g.experiment_id = ?
         GROUP BY r.round_number ORDER BY r.round_number
     """, (experiment_id,)).fetchall()
 
 
-def survival_no_interception(
-    conn: sqlite3.Connection, experiment_id: int
-) -> list:
+def guesses_by_round(conn: sqlite3.Connection, experiment_id: int, who: str) -> dict:
+    """round -> list of (code, guess) as tuples; `who` is 'interceptor' or 'decoder'."""
+    col = {"interceptor": "r.interceptor_guess", "decoder": "r.decoder_guess"}[who]
+    out: dict = {}
+    for rnd, code, guess in conn.execute(f"""
+            SELECT r.round_number, r.code, {col} FROM rounds r JOIN games g ON r.game_id = g.id
+            WHERE g.experiment_id = ? ORDER BY g.keyword_set_id, g.game_number""", (experiment_id,)):
+        out.setdefault(rnd, []).append((tuple(json.loads(code)), tuple(json.loads(guess))))
+    return out
+
+
+def permutation_p(pairs: list, rng: random.Random, permutations: int = PERMUTATIONS) -> float:
+    """One-sided p that the hits are this high if guesses ignored the code: shuffle the
+    guesses across games (keeping the drawn codes and the model's guessing habits)."""
+    codes = [c for c, _ in pairs]
+    guesses = [g for _, g in pairs]
+    observed = sum(c == g for c, g in pairs)
+    at_least = 0
+    for _ in range(permutations):
+        rng.shuffle(guesses)
+        if sum(c == g for c, g in zip(codes, guesses)) >= observed:
+            at_least += 1
+    return (at_least + 1) / (permutations + 1)
+
+
+def survival_no_interception(conn: sqlite3.Connection, experiment_id: int) -> list:
     """P(no interception through round t): (round, games_alive, total_games)."""
     rows = conn.execute("""
         SELECT g.id, r.round_number, r.interceptor_correct
@@ -131,38 +158,33 @@ def interceptor_win_rounds(
     return list(decided.values())
 
 
-def fallback_rates(conn: sqlite3.Connection, experiment_id: int) -> tuple:
-    row = conn.execute("""
-        SELECT COUNT(*),
-               SUM(r.encryptor_fallback),
-               SUM(r.interceptor_fallback),
-               SUM(r.decoder_fallback)
-        FROM rounds r JOIN games g ON r.game_id = g.id
+def call_stats(conn: sqlite3.Connection, experiment_id: int) -> list:
+    """Per agent: calls, invalid attempts (format / rule), mean tokens and seconds, cost, providers."""
+    return conn.execute("""
+        SELECT k.agent, COUNT(*),
+               SUM(k.status = 'format_error'), SUM(k.status = 'rule_violation'),
+               AVG(k.prompt_tokens), AVG(k.completion_tokens), AVG(k.reasoning_tokens),
+               AVG(k.elapsed_seconds), SUM(k.cost), GROUP_CONCAT(DISTINCT k.provider)
+        FROM calls k JOIN rounds r ON k.round_id = r.id JOIN games g ON r.game_id = g.id
         WHERE g.experiment_id = ?
+        GROUP BY k.agent ORDER BY CASE k.agent WHEN 'encryptor' THEN 1 WHEN 'interceptor' THEN 2 ELSE 3 END
+    """, (experiment_id,)).fetchall()
+
+
+def legacy_fallback_rates(conn: sqlite3.Connection, experiment_id: int) -> tuple:
+    """Older runs replaced invalid responses with random ones; newer runs never do."""
+    return conn.execute("""
+        SELECT COUNT(*), SUM(r.encryptor_fallback), SUM(r.interceptor_fallback), SUM(r.decoder_fallback)
+        FROM rounds r JOIN games g ON r.game_id = g.id WHERE g.experiment_id = ?
     """, (experiment_id,)).fetchone()
-    return row
 
 
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
-def multiword_rates(conn: sqlite3.Connection, experiment_id: int) -> tuple:
-    """(rounds, rounds with a multi-word clue, multi-word clues, total clues)."""
-    return conn.execute("""
-        SELECT COUNT(*),
-               SUM(r.multiword_clues > 0),
-               SUM(r.multiword_clues),
-               SUM(e.code_length)
-        FROM rounds r
-        JOIN games g ON r.game_id = g.id
-        JOIN experiments e ON g.experiment_id = e.id
-        WHERE g.experiment_id = ?
-    """, (experiment_id,)).fetchone()
-
-
-def report(db_path: str, experiment_id: int | None, exclude_fallbacks: bool) -> None:
-    conn = storage.get_conn(db_path)
+def report(db_path: str, experiment_id: int | None) -> None:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)  # safe while a run is writing
 
     experiments = list_experiments(conn)
     if not experiments:
@@ -178,14 +200,39 @@ def report(db_path: str, experiment_id: int | None, exclude_fallbacks: bool) -> 
         print("\nRun with --experiment <id> for the full report.")
         return
 
-    suffix = " (excluding fallback rounds)" if exclude_fallbacks else ""
+    enc, dec, icp = conn.execute(
+        "SELECT encryptor_model, decoder_model, interceptor_model FROM experiments WHERE id = ?",
+        (experiment_id,)).fetchone()
+    n_games, mean_s = conn.execute(
+        "SELECT COUNT(*), AVG(total_seconds) FROM games WHERE experiment_id = ?", (experiment_id,)).fetchone()
+    print(f"=== Experiment {experiment_id}: Enc {enc} | Dec {dec} | Int {icp} | {n_games} games ===")
+    if _has_table(conn, "game_status"):
+        status = dict(conn.execute("SELECT status, COUNT(*) FROM game_status WHERE experiment_id = ? "
+                                   "GROUP BY status", (experiment_id,)))
+        restarted = conn.execute("SELECT COUNT(*) FROM game_status WHERE experiment_id = ? AND starts > 1",
+                                 (experiment_id,)).fetchone()[0]
+        print(f"Queue: {status} | games started more than once: {restarted}")
+    print()
 
-    print(f"=== Experiment {experiment_id}{suffix} ===\n")
+    print("Per-round outcomes — Wilson 95% CI  (I_S: intercepted, decoder right; I_F: intercepted, decoder wrong)")
+    print(f"{'round':>5} {'n':>5}  {'S':>22}  {'I_S':>22}  {'I_F':>22}  {'F':>22}")
+    tot = [0, 0, 0, 0, 0]
+    for rnd, n, s, i_s, i_f, f in per_round_outcomes(conn, experiment_id):
+        print(f"{rnd:>5} {n:>5}  {_fmt(s, n):>22}  {_fmt(i_s, n):>22}  {_fmt(i_f, n):>22}  {_fmt(f, n):>22}")
+        tot = [a + b for a, b in zip(tot, (n, s, i_s, i_f, f))]
+    n, s, i_s, i_f, f = tot
+    print(f"{'all':>5} {n:>5}  {_fmt(s, n):>22}  {_fmt(i_s, n):>22}  {_fmt(i_f, n):>22}  {_fmt(f, n):>22}")
 
-    print("Per-round outcome rates — Wilson 95% CI")
-    print(f"{'round':>5} {'n':>5}  {'Success':>22}  {'Intercepted':>22}  {'Decoder fail':>22}")
-    for rnd, n, s, i, f in per_round_outcomes(conn, experiment_id, exclude_fallbacks):
-        print(f"{rnd:>5} {n:>5}  {_fmt(s, n):>22}  {_fmt(i, n):>22}  {_fmt(f, n):>22}")
+    chance = chance_rate(conn, experiment_id)
+    rng = random.Random(PERMUTATION_SEED)
+    print(f"\nInterceptor vs chance (any guess independent of the code hits {100*chance:.2f}%)")
+    print(f"permutation test: {PERMUTATIONS} shuffles of the guesses within each round, one-sided")
+    print(f"{'round':>5} {'n':>5}  {'hit rate':>22}  {'excess':>8}  {'p':>7}  most common guess")
+    for rnd, pairs in sorted(guesses_by_round(conn, experiment_id, "interceptor").items()):
+        k = sum(c == g for c, g in pairs)
+        top, top_n = Counter(g for _, g in pairs).most_common(1)[0]
+        print(f"{rnd:>5} {len(pairs):>5}  {_fmt(k, len(pairs)):>22}  {100*(k/len(pairs) - chance):+7.1f}pp"
+              f"  {permutation_p(pairs, rng):7.4f}  {'-'.join(map(str, top))} ({100*top_n/len(pairs):.0f}%)")
 
     print("\nSurvival — P(no interception through round t)")
     print(f"{'round':>5}  {'alive':>5}  {'rate':>22}")
@@ -206,13 +253,24 @@ def report(db_path: str, experiment_id: int | None, exclude_fallbacks: bool) -> 
         by_round = [sum(1 for d in decided if d is not None and d <= t) for t in range(1, horizon + 1)]
         print(f"{label:<28} {_fmt(wins, n):>22}  {by_round}")
 
-    n, enc_fb, int_fb, dec_fb = fallback_rates(conn, experiment_id)
-    print(f"\nFallback rates over {n} rounds: "
-          f"Enc {_fmt(enc_fb or 0, n)} | Int {_fmt(int_fb or 0, n)} | Dec {_fmt(dec_fb or 0, n)}")
+    if _has_table(conn, "calls"):
+        rows = call_stats(conn, experiment_id)
+        print("\nCalls per agent (invalid = unusable attempt, resent; rate over all attempts)")
+        print(f"{'agent':<12} {'calls':>6}  {'format error':>22}  {'rule violation':>22}"
+              f"  {'in tok':>6} {'out tok':>7} {'reason':>7} {'sec':>6} {'cost $':>8}  provider")
+        total_cost = 0.0
+        for agent, calls, fmt_err, rule, tin, tout, treason, secs, cost, prov in rows:
+            total_cost += cost or 0
+            print(f"{agent:<12} {calls:>6}  {_fmt(fmt_err or 0, calls):>22}  {_fmt(rule or 0, calls):>22}"
+                  f"  {tin or 0:6.0f} {tout or 0:7.0f} {treason or 0:7.0f} {secs or 0:6.1f} {cost or 0:8.4f}  {prov}")
+        if n_games:
+            print(f"Total cost ${total_cost:.4f} (${total_cost / n_games:.4f} per game) | "
+                  f"mean game duration {mean_s / 60:.1f} min")
 
-    n_rounds, mw_rounds, mw_clues, n_clues = multiword_rates(conn, experiment_id)
-    print(f"Multi-word clues (one-word rule broken): rounds {_fmt(mw_rounds or 0, n_rounds)} | "
-          f"clues {_fmt(mw_clues or 0, n_clues or 0)}")
+    n, enc_fb, int_fb, dec_fb = legacy_fallback_rates(conn, experiment_id)
+    if (enc_fb or 0) + (int_fb or 0) + (dec_fb or 0):
+        print(f"\nLegacy random fallbacks over {n} rounds: "
+              f"Enc {_fmt(enc_fb or 0, n)} | Int {_fmt(int_fb or 0, n)} | Dec {_fmt(dec_fb or 0, n)}")
 
     conn.close()
 
@@ -222,10 +280,8 @@ def main():
     ap.add_argument("--db", default="results/decrypto.db")
     ap.add_argument("--experiment", type=int, default=None,
                     help="Experiment id (omit to list all)")
-    ap.add_argument("--exclude-fallbacks", action="store_true",
-                    help="Drop rounds where any agent fell back to a random response")
     args = ap.parse_args()
-    report(args.db, args.experiment, args.exclude_fallbacks)
+    report(args.db, args.experiment)
 
 
 if __name__ == "__main__":
