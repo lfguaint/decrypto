@@ -2,11 +2,9 @@ from __future__ import annotations
 import itertools
 import time
 
-from openai import OpenAI
-
 from config import ExperimentConfig
 from models import KeywordPair, RoundRecord, GameResult
-from agents import Encryptor, Interceptor, Decoder
+from agents import Encryptor, Interceptor, Decoder, _make_client
 
 
 def all_codes(num_keywords: int, code_length: int) -> list[tuple]:
@@ -14,8 +12,32 @@ def all_codes(num_keywords: int, code_length: int) -> list[tuple]:
     return list(itertools.permutations(range(1, num_keywords + 1), code_length))
 
 
+MAX_ATTEMPTS = 3
+
+
+def _agent_backend(per_agent: str | None, default: str) -> str:
+    return per_agent if per_agent is not None else default
+
+
+class _StageFailed(Exception):
+    pass
+
+
+def _stage(agent: str, act, calls: list, verbose: bool):
+    """Resend the identical request until the response is usable (up to MAX_ATTEMPTS)."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        value, call = act()
+        call.attempt = attempt
+        calls.append((agent, call))
+        if value is not None:
+            return value
+        if verbose:
+            print(f" [{agent} attempt {attempt}/{MAX_ATTEMPTS}: {call.status}: {call.error}]", end="", flush=True)
+    raise _StageFailed(f"{agent} gave no usable response in {MAX_ATTEMPTS} attempts "
+                       f"(last: {call.status}: {call.error})")
+
+
 def run_game(
-    client: OpenAI,
     cfg: ExperimentConfig,
     keywords: list[KeywordPair],
     keyword_set_id: int,
@@ -24,9 +46,13 @@ def run_game(
     verbose: bool = True,
 ) -> GameResult:
     """Play one game over the pre-drawn `codes` sequence (one code per round)."""
-    encryptor = Encryptor(client, cfg.agents, cfg.backend, keywords, cfg.code_length)
-    interceptor = Interceptor(client, cfg.agents, cfg.backend, cfg.num_keywords, cfg.code_length)
-    decoder = Decoder(client, cfg.agents, cfg.backend, keywords, cfg.code_length)
+    enc_backend = _agent_backend(cfg.agents.encryptor_backend, cfg.backend)
+    dec_backend = _agent_backend(cfg.agents.decoder_backend, cfg.backend)
+    int_backend = _agent_backend(cfg.agents.interceptor_backend, cfg.backend)
+
+    encryptor = Encryptor(_make_client(enc_backend), cfg.agents, enc_backend, keywords, cfg.code_length)
+    interceptor = Interceptor(_make_client(int_backend), cfg.agents, int_backend, cfg.num_keywords, cfg.code_length)
+    decoder = Decoder(_make_client(dec_backend), cfg.agents, dec_backend, keywords, cfg.code_length)
 
     result = GameResult(
         keyword_set_id=keyword_set_id,
@@ -43,12 +69,19 @@ def run_game(
         if verbose:
             print(f"    Round {round_num}/{len(codes)} | code={list(code)}", end="", flush=True)
 
-        clues, enc_fb = encryptor.give_clues(code, history)
-        if verbose:
-            print(f" | clues={list(clues)}", end="", flush=True)
-
-        interceptor_guess, int_fb = interceptor.guess(clues, history)
-        decoder_guess, dec_fb = decoder.guess(clues, history)
+        calls: list = []
+        try:
+            clues = _stage("encryptor", lambda: encryptor.give_clues(code, history), calls, verbose)
+            if verbose:
+                print(f" | clues={list(clues)}", end="", flush=True)
+            interceptor_guess = _stage("interceptor", lambda: interceptor.guess(clues, history), calls, verbose)
+            decoder_guess = _stage("decoder", lambda: decoder.guess(clues, history), calls, verbose)
+        except _StageFailed as e:
+            result.aborted, result.abort_reason = True, f"round {round_num}: {e}"
+            result.pending_calls = calls
+            if verbose:
+                print(f" | ABORTED: {e}", flush=True)
+            break
 
         elapsed = time.time() - round_start
         if verbose:
@@ -61,9 +94,7 @@ def run_game(
             interceptor_guess=interceptor_guess,
             decoder_guess=decoder_guess,
             elapsed_seconds=elapsed,
-            encryptor_fallback=enc_fb,
-            interceptor_fallback=int_fb,
-            decoder_fallback=dec_fb,
+            calls=calls,
         )
         result.rounds.append(record)
 

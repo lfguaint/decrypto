@@ -3,6 +3,8 @@ import argparse
 import math
 import sqlite3
 
+import storage
+
 
 # ---------------------------------------------------------------------------
 # Wilson score interval
@@ -101,9 +103,10 @@ def interceptor_win_rounds(
     horizon: int,
     tokens_to_win: int = 2,
 ) -> list:
-    """Post-hoc 3-player win rule: each interception and each decoder miss gives
-    the Interceptor a token. Per game: round the Interceptor reached
-    `tokens_to_win` within `horizon`, or None if the Encryptor team held."""
+    """Post-hoc 3-player win rule, scored like S/I/F: an interception gives the
+    Interceptor one token and ends the round (the decoder's answer is not scored);
+    otherwise a decoder miss gives one token. Per game: round the Interceptor
+    reached `tokens_to_win` within `horizon`, or None if the Encryptor team held."""
     rows = conn.execute("""
         SELECT g.id, r.round_number, r.interceptor_correct, r.decoder_correct
         FROM rounds r JOIN games g ON r.game_id = g.id
@@ -117,9 +120,12 @@ def interceptor_win_rounds(
         decided.setdefault(game_id, None)
         if decided[game_id] is not None:
             continue
-        # The rulebook forbids interception in round 1; decoder misses still count.
-        interception_token = intercepted if (rnd > 1 or count_round1_interception) else 0
-        tokens[game_id] = tokens.get(game_id, 0) + interception_token + (1 - decoded)
+        # The rulebook forbids interception in round 1, so there the decoder's answer is what counts.
+        if intercepted and (rnd > 1 or count_round1_interception):
+            gained = 1
+        else:
+            gained = 1 - decoded
+        tokens[game_id] = tokens.get(game_id, 0) + gained
         if tokens[game_id] >= tokens_to_win:
             decided[game_id] = rnd
     return list(decided.values())
@@ -141,8 +147,22 @@ def fallback_rates(conn: sqlite3.Connection, experiment_id: int) -> tuple:
 # Report
 # ---------------------------------------------------------------------------
 
+def multiword_rates(conn: sqlite3.Connection, experiment_id: int) -> tuple:
+    """(rounds, rounds with a multi-word clue, multi-word clues, total clues)."""
+    return conn.execute("""
+        SELECT COUNT(*),
+               SUM(r.multiword_clues > 0),
+               SUM(r.multiword_clues),
+               SUM(e.code_length)
+        FROM rounds r
+        JOIN games g ON r.game_id = g.id
+        JOIN experiments e ON g.experiment_id = e.id
+        WHERE g.experiment_id = ?
+    """, (experiment_id,)).fetchone()
+
+
 def report(db_path: str, experiment_id: int | None, exclude_fallbacks: bool) -> None:
-    conn = sqlite3.connect(db_path)
+    conn = storage.get_conn(db_path)
 
     experiments = list_experiments(conn)
     if not experiments:
@@ -189,6 +209,10 @@ def report(db_path: str, experiment_id: int | None, exclude_fallbacks: bool) -> 
     n, enc_fb, int_fb, dec_fb = fallback_rates(conn, experiment_id)
     print(f"\nFallback rates over {n} rounds: "
           f"Enc {_fmt(enc_fb or 0, n)} | Int {_fmt(int_fb or 0, n)} | Dec {_fmt(dec_fb or 0, n)}")
+
+    n_rounds, mw_rounds, mw_clues, n_clues = multiword_rates(conn, experiment_id)
+    print(f"Multi-word clues (one-word rule broken): rounds {_fmt(mw_rounds or 0, n_rounds)} | "
+          f"clues {_fmt(mw_clues or 0, n_clues or 0)}")
 
     conn.close()
 

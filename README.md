@@ -6,7 +6,7 @@ A multi-agent benchmark for evaluating LLM capabilities under information asymme
 
 ## Overview
 
-The simulation uses **4 keyword cards** (numbered 1–4), known only to two of the three agents. Over **8 rounds**, a 3-digit code is drawn each round (no repetition, from the 24 possible permutations of {1,2,3,4} taken 3 at a time). The core tension: one agent must communicate the code through word clues, helping a teammate while trying not to reveal the keywords to the opponent.
+The simulation uses **4 keyword cards** (numbered 1–4), known only to two of the three agents. Over **5 rounds**, a 3-digit code is drawn each round uniformly at random from the 24 possible permutations of {1,2,3,4} taken 3 at a time (with replacement, so the same code may appear more than once). The core tension: one agent must communicate the code through word clues, helping a teammate while trying not to reveal the keywords to the opponent.
 
 > This is not a faithful recreation of the board game. It simplifies the original rules to isolate and measure specific LLM capabilities in a reproducible, automated setting.
 

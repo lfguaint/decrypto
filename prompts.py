@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 from models import KeywordPair, RoundRecord
 
 
@@ -32,120 +33,41 @@ def _guess_json_format(code_length: int) -> str:
     return '{"guess": [' + digits + "]}"
 
 
-def _example_code(num_keywords: int, code_length: int) -> str:
-    # produce a simple example like "2-4-1"
-    digits = list(range(2, num_keywords + 1))[:code_length - 1]
-    example = [num_keywords] + digits
-    return "-".join(str(d) for d in example[:code_length])
-
-
 # ---------------------------------------------------------------------------
-# Encryptor — v1 (baseline)
+# Encryptor (prompt v3: game rules only, no strategy)
 # ---------------------------------------------------------------------------
 
-def _encryptor_system_v1(keywords: list[KeywordPair], code_length: int) -> str:
+def encryptor_system(keywords: list[KeywordPair], code_length: int) -> str:
     num_keywords = len(keywords)
+    digits_set = "{" + ", ".join(str(i) for i in range(1, num_keywords + 1)) + "}"
     return f"""\
-You are the Encryptor in a word-clue game.
+You are the Encryptor in a word-clue game with three players: you (Encryptor), a Decoder teammate, and an Interceptor opponent.
 
-Your team has {num_keywords} secret keyword cards:
+Your team's {num_keywords} secret keyword cards, known to you and the Decoder:
 {_format_keywords(keywords)}
 
-Each round you receive a {code_length}-digit code — a sequence of {code_length} distinct digits \
-from 1 to {num_keywords} (e.g. {_example_code(num_keywords, code_length)}).
-Your job is to give exactly {code_length} one-word clues — one clue per digit, in order — \
-that hint at the corresponding keyword strongly enough for your Decoder teammate to reconstruct \
-the code, yet subtly enough that the Interceptor (who does NOT know the keywords) cannot guess it.
+Each round you receive a {code_length}-digit code — a sequence of {code_length} digits from {digits_set}, each appearing exactly once.
 
-Rules for clues:
-- Each clue must be a single word (no numbers, no parts of the keyword itself).
-- The clue must relate to the keyword it encodes, not to its position.
-- Clues from all previous rounds are public — use that to your advantage but avoid patterns \
-the Interceptor can exploit.
+**Your goal:**
+- Encode the {code_length}-digit code as {code_length} one-word clues — the first clue corresponds to the first digit, the second to the second, and the third to the third.
+- Your aim: the Decoder (who knows the keywords) recovers the code from your clues; the Interceptor (who does not know the keywords) does not.
+
+**How the game works:**
+- After your clues, the Interceptor submits their guess first, then the Decoder submits theirs independently — neither sees the other's guess for the current round.
+- If the Interceptor guesses correctly, the round is intercepted regardless of the Decoder's guess.
+- At the end of each round, the actual code is revealed to all three players.
+- Each round's code is drawn uniformly at random from all possible codes, independently of earlier rounds, so the same code may come up more than once.
+- The public record grows each round: after a round ends, its clues, both guesses, and the actual code remain visible to all three players in every subsequent round.
+
+**Rules for clues:**
+- Each clue must be a single word with no digits.
+- No keyword may be used as a clue, not even for a different keyword.
+- A clue must relate to the meaning of the keyword it encodes, not to its spelling, letters, sound or position.
+- No clue word may be used more than once, even across different rounds.
 
 Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
 {_clue_json_format(code_length)}
 """
-
-
-# ---------------------------------------------------------------------------
-# Encryptor — v2 (strategic)
-# ---------------------------------------------------------------------------
-
-def _encryptor_system_v2(keywords: list[KeywordPair], code_length: int) -> str:
-    num_keywords = len(keywords)
-    return f"""\
-You are the Encryptor in a word-clue game.
-
-Your team has {num_keywords} secret keyword cards:
-{_format_keywords(keywords)}
-
-Each round you receive a {code_length}-digit code — a sequence of {code_length} distinct digits \
-from 1 to {num_keywords} (e.g. {_example_code(num_keywords, code_length)}).
-Your job is to give exactly {code_length} one-word clues — one clue per digit, in order.
-
-You have two competing objectives:
-1. GUIDE your Decoder teammate: the clues must be clear enough for the Decoder — who knows \
-the keyword cards — to recover the exact code.
-2. MISLEAD the Interceptor: the Interceptor does NOT know the keywords but observes every \
-clue and its corresponding revealed code. Each clue you give is a data point the Interceptor \
-can use to map clues to keywords. After just a few rounds, obvious clues will expose the \
-full keyword mapping and the Interceptor will intercept every subsequent code.
-
-Strategic guidelines:
-- Avoid direct synonyms or category labels (e.g. do not clue "tractor" with "farm" or \
-"vehicle" — those are the first associations an outsider would try).
-- Prefer oblique, thematic, or abstract associations that your Decoder can still resolve \
-given the keyword context, but that an uninformed observer would not immediately link to \
-the correct keyword.
-- Vary your clue style across rounds to prevent the Interceptor from building a reliable \
-association map.
-- Remember: the Decoder has a significant advantage — they know the keywords. Even a subtle \
-or indirect clue is enough for them. Sacrifice directness for secrecy.
-
-Rules for clues:
-- Each clue must be a single word (no numbers, no parts of the keyword itself).
-- The clue must relate to the keyword it encodes, not to its position.
-
-Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
-{_clue_json_format(code_length)}
-"""
-
-
-# ---------------------------------------------------------------------------
-# Encryptor — dispatcher
-# ---------------------------------------------------------------------------
-
-def encryptor_system(
-    keywords: list[KeywordPair], code_length: int, prompt_version: int = 1
-) -> str:
-    if prompt_version == 2:
-        return _encryptor_system_v2(keywords, code_length)
-    return _encryptor_system_v1(keywords, code_length)
-
-
-# ---------------------------------------------------------------------------
-# Encryptor — custom template (used by prompt optimization, e.g. GEPA)
-# ---------------------------------------------------------------------------
-# Placeholders (literal tokens, replaced via str.replace so stray braces in
-# the template body are harmless):
-#   {num_keywords}   number of keyword cards
-#   {keywords_block} the numbered keyword list
-#   {code_length}    digits per code
-#   {example_code}   e.g. "4-2-3"
-#   {json_format}    required JSON response format
-
-def render_encryptor_template(
-    template: str, keywords: list[KeywordPair], code_length: int
-) -> str:
-    num_keywords = len(keywords)
-    out = template
-    out = out.replace("{num_keywords}", str(num_keywords))
-    out = out.replace("{keywords_block}", _format_keywords(keywords))
-    out = out.replace("{code_length}", str(code_length))
-    out = out.replace("{example_code}", _example_code(num_keywords, code_length))
-    out = out.replace("{json_format}", _clue_json_format(code_length))
-    return out
 
 
 def encryptor_user(code: tuple, history: list[RoundRecord]) -> str:
@@ -156,7 +78,7 @@ Public game history so far:
 
 Your code this round: {code_str}
 
-Provide your {len(code)} clues now.
+Give your {len(code)} one-word clues now, one per digit in order.
 """
 
 
@@ -165,17 +87,23 @@ Provide your {len(code)} clues now.
 # ---------------------------------------------------------------------------
 
 def interceptor_system(num_keywords: int, code_length: int) -> str:
+    digits_set = "{" + ", ".join(str(i) for i in range(1, num_keywords + 1)) + "}"
     return f"""\
-You are the Interceptor in a word-clue game.
+You are the Interceptor in a word-clue game with three players: an Encryptor, a Decoder, and you (Interceptor).
 
-There are {num_keywords} keyword cards numbered 1 through {num_keywords}. \
-You do NOT know what the keywords are.
-Each round the Encryptor gives {code_length} one-word clues. Your goal is to deduce the \
-{code_length}-digit code those clues represent — a sequence of {code_length} distinct digits \
-from 1 to {num_keywords}.
+The Encryptor and Decoder share {num_keywords} secret keyword cards numbered 1 to {num_keywords}. You do not know what the keywords are.
 
-Study the accumulating public history of (clues → actual codes) to infer patterns and \
-eventually identify what each number might represent.
+Each round the Encryptor gives {code_length} one-word clues in order — the first clue corresponds to the first digit of the code, the second to the second, and the third to the third.
+
+**Your goal:**
+- Guess the {code_length}-digit code: a sequence of {code_length} digits from {digits_set}, each appearing exactly once.
+
+**How the game works:**
+- You submit your guess before the Decoder; neither of you sees the other's guess for the current round.
+- If you guess correctly, the round is intercepted regardless of the Decoder's guess.
+- At the end of each round, the actual code is revealed to all three players.
+- Each round's code is drawn uniformly at random from all possible codes, independently of earlier rounds, so the same code may come up more than once.
+- The public record grows each round: after a round ends, its clues, both guesses, and the actual code remain visible to all three players in every subsequent round.
 
 Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
 {_guess_json_format(code_length)}
@@ -190,7 +118,7 @@ Public game history so far:
 
 This round's clues: {clues_str}
 
-Guess the {len(clues)}-digit code now. Each digit must be distinct and between 1 and {num_keywords}.
+Guess the {len(clues)}-digit code now.
 """
 
 
@@ -200,17 +128,23 @@ Guess the {len(clues)}-digit code now. Each digit must be distinct and between 1
 
 def decoder_system(keywords: list[KeywordPair], code_length: int) -> str:
     num_keywords = len(keywords)
+    digits_set = "{" + ", ".join(str(i) for i in range(1, num_keywords + 1)) + "}"
     return f"""\
-You are the Decoder in a word-clue game.
+You are the Decoder in a word-clue game with three players: an Encryptor teammate, you (Decoder), and an Interceptor opponent.
 
-Your team's {num_keywords} secret keyword cards:
+Your team's {num_keywords} secret keyword cards (unknown to the Interceptor):
 {_format_keywords(keywords)}
 
-Each round your Encryptor teammate gives {code_length} one-word clues. Each clue corresponds \
-to one of the keywords by its number (1-{num_keywords}). Your job is to reconstruct the \
-{code_length}-digit code — the sequence of keyword numbers the clues point to.
+Each round your Encryptor gives {code_length} one-word clues in order — the first clue corresponds to the first digit of the code, the second to the second, and the third to the third.
 
-The code contains {code_length} DISTINCT digits, each between 1 and {num_keywords}.
+**Your goal:**
+- Recover the {code_length}-digit code: a sequence of {code_length} digits from {digits_set}, each appearing exactly once.
+
+**How the game works:**
+- The Interceptor submits their guess before you; you submit yours independently — you do not see the Interceptor's guess for the current round.
+- At the end of each round, the actual code is revealed to all three players.
+- Each round's code is drawn uniformly at random from all possible codes, independently of earlier rounds, so the same code may come up more than once.
+- The public record grows each round: after a round ends, its clues, both guesses, and the actual code remain visible to all three players in every subsequent round.
 
 Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
 {_guess_json_format(code_length)}
@@ -225,5 +159,44 @@ Public game history so far:
 
 This round's clues: {clues_str}
 
-Decode the {len(clues)}-digit code now. Each digit must be distinct and between 1 and {num_keywords}.
+Recover the {len(clues)}-digit code now.
 """
+
+
+# ---------------------------------------------------------------------------
+# Frozen prompt texts
+# ---------------------------------------------------------------------------
+
+def canonical_prompts() -> dict[str, str]:
+    """Every prompt text of the standard configuration (4 keywords, 3 digits), with
+    placeholder keywords and clues, for the first round and for a later round."""
+    kw = [KeywordPair(i, f"<keyword_{i}>") for i in range(1, 5)]
+    clues = ("<clue_1>", "<clue_2>", "<clue_3>")
+    history = [RoundRecord(1, (2, 4, 1), clues, (1, 2, 3), (2, 4, 1))]
+    return {
+        "encryptor_system": encryptor_system(kw, 3),
+        "interceptor_system": interceptor_system(4, 3),
+        "decoder_system": decoder_system(kw, 3),
+        "encryptor_user_round1": encryptor_user((3, 1, 4), []),
+        "encryptor_user": encryptor_user((3, 1, 4), history),
+        "interceptor_user": interceptor_user(clues, history, 4),
+        "decoder_user": decoder_user(clues, history, 4),
+    }
+
+
+def prompts_sha256() -> str:
+    texts = canonical_prompts()
+    return hashlib.sha256(
+        "\n\x00\n".join(f"{name}\n{texts[name]}" for name in sorted(texts)).encode()
+    ).hexdigest()
+
+
+# Frozen 2026-10-26 (prompt v3, matches the appendix of the article). Editing any
+# prompt text must be deliberate: update this hash and the appendix together.
+PROMPTS_SHA256 = "7cec2899979d30d34601976d513fd40f42e47e95d7377bd12425d3397248e3b8"
+
+if prompts_sha256() != PROMPTS_SHA256:
+    raise RuntimeError(
+        "prompts.py texts differ from the frozen prompt v3 (sha256 mismatch). "
+        "Experiments would no longer match the article appendix."
+    )

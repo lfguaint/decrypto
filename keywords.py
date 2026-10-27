@@ -1,4 +1,6 @@
 from __future__ import annotations
+import hashlib
+import json
 import random
 from models import KeywordPair
 
@@ -57,6 +59,43 @@ WORD_LIST = [
     "web", "wedding", "well", "whale", "whip", "whistle", "whiteboard", "wind",
     "wish", "witch", "word", "yard", "zodiac", "zoo",
 ]
+
+# Frozen 2026-10-26: sampling picks words by list position, so any edit, addition
+# or reordering silently changes every keyword set drawn from the benchmark seed.
+WORD_LIST_SHA256 = "ce596660a9fc4ec831e99e49298666317ac483f74574a019be7847ed397d31cd"
+
+
+def word_list_sha256() -> str:
+    return hashlib.sha256("\n".join(WORD_LIST).encode()).hexdigest()
+
+
+if word_list_sha256() != WORD_LIST_SHA256:
+    raise RuntimeError(
+        "keywords.WORD_LIST differs from the frozen list (sha256 mismatch). "
+        "The benchmark keyword sets (data/keyword_sets_seed3.json) would no longer match."
+    )
+
+
+def load_keyword_sets(
+    path: str, num_keywords: int, num_sets: int, keyword_seed: int | None
+) -> list[list[KeywordPair]]:
+    """Read sets 1..num_sets from a canonical keyword-set file (see data/)."""
+    with open(path) as f:
+        data = json.load(f)
+    if data["num_keywords"] != num_keywords:
+        raise ValueError(f"{path} has {data['num_keywords']} keywords per set, config asks for {num_keywords}.")
+    if keyword_seed is not None and data["keyword_seed"] != keyword_seed:
+        raise ValueError(f"{path} was drawn with keyword_seed={data['keyword_seed']}, config has {keyword_seed}.")
+    sets = data["sets"]
+    if len(sets) < num_sets:
+        raise ValueError(f"{path} has {len(sets)} sets, config asks for {num_sets}.")
+    out = []
+    for expected_id, s in enumerate(sets[:num_sets], start=1):
+        words = s["keywords"]
+        if s["keyword_set_id"] != expected_id or len(words) != num_keywords or len(set(words)) != num_keywords:
+            raise ValueError(f"{path}: malformed set at position {expected_id}: {s}")
+        out.append([KeywordPair(number=i + 1, word=w) for i, w in enumerate(words)])
+    return out
 
 
 _MAX_REDRAWS = 1000
