@@ -216,12 +216,10 @@ def report(db_path: str, experiment_id: int | None) -> None:
 
     print("Per-round outcomes — Wilson 95% CI  (I_S: intercepted, decoder right; I_F: intercepted, decoder wrong)")
     print(f"{'round':>5} {'n':>5}  {'S':>22}  {'I_S':>22}  {'I_F':>22}  {'F':>22}")
-    tot = [0, 0, 0, 0, 0]
+    # No pooled "all rounds" row: the 5 rounds of a game are correlated, so a Wilson CI
+    # over rounds treated as independent would be too narrow.
     for rnd, n, s, i_s, i_f, f in per_round_outcomes(conn, experiment_id):
         print(f"{rnd:>5} {n:>5}  {_fmt(s, n):>22}  {_fmt(i_s, n):>22}  {_fmt(i_f, n):>22}  {_fmt(f, n):>22}")
-        tot = [a + b for a, b in zip(tot, (n, s, i_s, i_f, f))]
-    n, s, i_s, i_f, f = tot
-    print(f"{'all':>5} {n:>5}  {_fmt(s, n):>22}  {_fmt(i_s, n):>22}  {_fmt(i_f, n):>22}  {_fmt(f, n):>22}")
 
     chance = chance_rate(conn, experiment_id)
     rng = random.Random(PERMUTATION_SEED)

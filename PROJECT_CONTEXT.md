@@ -139,9 +139,11 @@ Each round the Encryptor gives 3 one-word clues in order — the first clue corr
 
 ## Resultados Preliminares (Calibração)
 
-### Gemma 3 27B self-play (500 jogos, prompt v2)
-- S ≈ 47%, I ≈ 28%, F ≈ 25%
-- ~40s/jogo em média
+### Gemma 4 31B self-play no DGX (500 jogos, prompt v2; `results/selfplay_gemma.db`, exp. 3)
+- S = 69.8%, I = 28.1%, F = 2.1% (todas as rodadas)
+- Interceptação por rodada: R1 7.0%, R2 12.4%, R3 30.2%, R4 40.6%, R5 50.2%
+- Condições antigas: sem reposição, fallback aleatório (~0.4% das chamadas), seed 2026, quantização do DGX desconhecida
+- ~44s/jogo em média
 - Prior rigidity: 500/500 jogos com guess R1 = [1,2,3] (modelo colapsa ao prior)
 
 ### Nemotron 70B como Interceptor (12 jogos, prompt v2)
