@@ -96,9 +96,10 @@ PAUSE, CANCEL = "pause", "cancel"
 MAX_CONSECUTIVE_API_FAILURES = 3
 
 
-def control_files(db_path: str) -> tuple[str, str]:
-    """Creating <db>.pause or <db>.cancel (e.g. from another terminal) pauses or cancels the queue."""
-    base = os.path.splitext(db_path)[0]
+def control_files(db_path: str, experiment_id: int) -> tuple[str, str]:
+    """Creating <db>_exp<ID>.pause or .cancel (e.g. from another terminal) pauses or cancels that
+    experiment's queue. Per experiment, so runs sharing a database are controlled separately."""
+    base = f"{os.path.splitext(db_path)[0]}_exp{experiment_id}"
     return base + ".pause", base + ".cancel"
 
 
@@ -107,14 +108,15 @@ def _play(conn, experiment_id: int, cfg: ExperimentConfig, tasks: list, workers:
     """Keep up to `workers` games running; when one finishes, the next queued game starts.
     All status changes and DB writes happen here, in the main thread.
 
-    Pause  (Ctrl+C once, or <db>.pause): start no new game, finish and save the running ones.
-    Cancel (Ctrl+C twice, <db>.cancel, or MAX_CONSECUTIVE_API_FAILURES API failures in a row):
+    Pause  (Ctrl+C once, or <db>_exp<ID>.pause): start no new game, finish and save the running ones.
+    Cancel (Ctrl+C twice, <db>_exp<ID>.cancel, or MAX_CONSECUTIVE_API_FAILURES API failures in a row):
            stop at once; the interrupted games go back to the queue.
     Either way, resume later with --retry-experiment."""
-    pause_file, cancel_file = control_files(db_path)
+    pause_file, cancel_file = control_files(db_path, experiment_id)
     for f in (pause_file, cancel_file):
         if os.path.exists(f):
             os.remove(f)
+    print(f"Pause: touch {pause_file} | cancel: touch {cancel_file}\n", flush=True)
     stop = {"request": None}
 
     def on_sigint(signum, frame):

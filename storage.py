@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS game_status (
 """
 
 QUEUED, RUNNING, DONE, ERROR = "queued", "running", "done", "error"
+DB_BUSY_TIMEOUT_S = 60
 
 
 def _now() -> str:
@@ -251,7 +252,9 @@ def get_conn(db_path: str) -> sqlite3.Connection:
     parent = os.path.dirname(db_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # Several runs may write to the same database; each write takes milliseconds, so
+    # waiting up to DB_BUSY_TIMEOUT_S for the other run's lock is plenty.
+    conn = sqlite3.connect(db_path, timeout=DB_BUSY_TIMEOUT_S)
     conn.executescript(SCHEMA)
     _add_multiword_column(conn)
     conn.commit()

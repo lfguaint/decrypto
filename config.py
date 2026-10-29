@@ -98,14 +98,20 @@ OPENROUTER_MODELS = {
 # developer's own provider when OpenRouter offers it, otherwise a provider at fp8 or
 # higher precision, chosen per model. The reference DeepSeek V4 Flash is on StreamLake
 # (2026-10-27): DeepInfra's shared pool returned 429 at 8 concurrent games, while
-# StreamLake served 16 concurrent calls; it also serves DeepSeek V4 Pro.
+# StreamLake served 16 concurrent calls; it also serves DeepSeek V4 Pro. Qwen3 32B is
+# on SiliconFlow (2026-10-28), not the cheaper DeepInfra: DeepInfra caps output at 16,384
+# tokens, reasoning included, which would cut long reasoning (the reference passed 16k
+# in about 1% of Encryptor and Interceptor calls). Gemma 4 31B is on Novita bf16
+# (2026-10-28): tied with Crusoe as the cheapest at fp8 or higher, full precision, no 16k
+# output cap and, unlike DeepInfra, no flex/standard/priority tiers to pin. Crusoe's
+# shared pool returned 429 within a minute at 16 concurrent games (experiment #4, abandoned).
 # Quantization is pinned where reported.
 # Providers of the other models are still to be reviewed one by one; service tiers
-# (flex/standard/priority) of OpenAI, Google AI Studio and DeepInfra-Gemma are not pinned yet.
+# (flex/standard/priority) of OpenAI and Google AI Studio are not pinned yet.
 OPENROUTER_PROVIDERS = {
-    "google/gemma-4-31b-it":      {"provider": "deepinfra", "quantization": "fp8"},
+    "google/gemma-4-31b-it":      {"provider": "novita", "quantization": "bf16"},
     "openai/gpt-oss-120b":        {"provider": "deepinfra", "quantization": "bf16"},
-    "qwen/qwen3-32b":             {"provider": "deepinfra", "quantization": "fp8"},
+    "qwen/qwen3-32b":             {"provider": "siliconflow", "quantization": "fp8"},
     "deepseek/deepseek-v4-flash": {"provider": "streamlake", "quantization": "fp8"},
     "deepseek/deepseek-v4-pro":   {"provider": "streamlake", "quantization": "fp8"},
     "moonshotai/kimi-k3":         {"provider": "moonshotai"},

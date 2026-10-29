@@ -86,7 +86,8 @@ def parse_args():
                         help="Show the queue of experiment ID (done/running/queued/error) and exit")
     parser.add_argument("--limit", type=int, default=None, metavar="N",
                         help="Play only the first N games of the queue; the rest stay queued. "
-                             "Pause: Ctrl+C once or create <db>.pause; cancel: Ctrl+C twice or <db>.cancel")
+                             "Pause: Ctrl+C once or create <db>_exp<ID>.pause; "
+                             "cancel: Ctrl+C twice or <db>_exp<ID>.cancel")
     args = parser.parse_args()
     if args.status is None and args.retry_experiment is None and args.seed is None:
         parser.error("--seed is required (3 = benchmark, 42 = pilots/tests)")
