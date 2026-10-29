@@ -158,6 +158,52 @@ def interceptor_win_rounds(
     return list(decided.values())
 
 
+def interceptor_points(
+    conn: sqlite3.Connection,
+    experiment_id: int,
+    count_round1_interception: bool,
+    horizon: int,
+) -> list:
+    """Interceptor points per game over rounds 1..horizon, scored like interceptor_win_rounds:
+    an interception (I) or a decoder miss in a round not intercepted (F) is one point, S is zero.
+    The Interceptor wins a game with 2 or more points."""
+    rows = conn.execute("""
+        SELECT g.id, r.round_number, r.interceptor_correct, r.decoder_correct
+        FROM rounds r JOIN games g ON r.game_id = g.id
+        WHERE g.experiment_id = ? AND r.round_number <= ?
+        ORDER BY g.id, r.round_number
+    """, (experiment_id, horizon)).fetchall()
+    points: dict = {}
+    for game_id, rnd, intercepted, decoded in rows:
+        counted = intercepted and (rnd > 1 or count_round1_interception)
+        points[game_id] = points.get(game_id, 0) + (1 if counted else 1 - decoded)
+    return list(points.values())
+
+
+def t_quantile_975(df: int) -> float:
+    """97.5% quantile of Student's t (Cornish-Fisher expansion around z; error < 1e-3 for df >= 10)."""
+    z = 1.959964
+    return (z + (z ** 3 + z) / (4 * df) + (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2)
+            + (3 * z ** 7 + 19 * z ** 5 + 17 * z ** 3 - 15 * z) / (384 * df ** 3))
+
+
+def mean_ci(values: list) -> tuple:
+    """95% t interval of the mean over games (the independent unit): mean ± t * sd / sqrt(n)."""
+    n = len(values)
+    mean = sum(values) / n
+    if n < 2:
+        return mean, mean
+    sd = math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1))
+    half = t_quantile_975(n - 1) * sd / math.sqrt(n)
+    return mean - half, mean + half
+
+
+def chance_win_rate(chance: float, scored_rounds: int, tokens_to_win: int = 2) -> float:
+    """P(Interceptor wins) if it guesses blindly and the decoder never misses: Binomial tail."""
+    return sum(math.comb(scored_rounds, k) * chance ** k * (1 - chance) ** (scored_rounds - k)
+               for k in range(tokens_to_win, scored_rounds + 1))
+
+
 def call_stats(conn: sqlite3.Connection, experiment_id: int) -> list:
     """Per agent: calls, invalid attempts (format / rule), mean tokens and seconds, cost, providers."""
     return conn.execute("""
@@ -242,14 +288,36 @@ def report(db_path: str, experiment_id: int | None) -> None:
         WHERE g.experiment_id = ?
     """, (experiment_id,)).fetchone()[0] or 0
     horizon = min(5, max_round)
-    print(f"\nWin condition, post hoc (3-player rule: Interceptor needs 2 tokens by round {horizon})")
-    print(f"{'variant':<28} {'Interceptor wins':>22}  decided by round 1..{horizon}")
-    for label, count_r1 in (("R1 interception counts", True), ("rulebook: no R1 intercept", False)):
+    variants = (("R1 interception counts", True), ("rulebook: no R1 intercept", False))
+    print(f"\nWin condition, post hoc (I or F = 1 point to the Interceptor, S = 0; "
+          f"Interceptor wins with 2+ points in {horizon} rounds)")
+    print(f"{'variant':<28} {'games':>9}  {'Encryptor team wins':>22}  {'Interceptor wins':>22}  {'chance':>6}"
+          f"  decided by round 1..{horizon}")
+    for label, count_r1 in variants:
         decided = interceptor_win_rounds(conn, experiment_id, count_r1, horizon)
         n = len(decided)
         wins = sum(1 for d in decided if d is not None)
         by_round = [sum(1 for d in decided if d is not None and d <= t) for t in range(1, horizon + 1)]
-        print(f"{label:<28} {_fmt(wins, n):>22}  {by_round}")
+        p0 = chance_win_rate(chance, horizon if count_r1 else horizon - 1)
+        print(f"{label:<28} {f'{n - wins}:{wins}':>9}  {_fmt(n - wins, n):>22}  {_fmt(wins, n):>22}"
+              f"  {100*p0:5.1f}%  {by_round}")
+    print("chance: Interceptor guessing blindly against a decoder that never misses")
+
+    print(f"\nInterceptor points per game (0..{horizon}); mean CI: Student's t over games")
+    print(f"{'variant':<28} {'mean':>5} {'95% CI':>14} {'sd':>5} {'median':>6} {'chance':>6}"
+          f"  games with 0..{horizon} points")
+    for label, count_r1 in variants:
+        points = interceptor_points(conn, experiment_id, count_r1, horizon)
+        if not points:
+            continue
+        n = len(points)
+        mean = sum(points) / n
+        sd = math.sqrt(sum((p - mean) ** 2 for p in points) / (n - 1)) if n > 1 else 0.0
+        lo, hi = mean_ci(points)
+        dist = [points.count(k) for k in range(horizon + 1)]
+        chance_mean = chance * (horizon if count_r1 else horizon - 1)
+        print(f"{label:<28} {mean:5.2f} [{lo:4.2f}, {hi:4.2f}] {sd:5.2f} {sorted(points)[n // 2]:>6}"
+              f" {chance_mean:6.2f}  {dist}")
 
     if _has_table(conn, "calls"):
         rows = call_stats(conn, experiment_id)
