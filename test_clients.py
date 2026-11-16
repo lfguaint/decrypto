@@ -21,7 +21,7 @@ PING_PROMPT = "Reply with exactly one word: OK"
 DEFAULT_MODELS = {
     Backend.OLLAMA:     "gpt-oss:20b",
     Backend.OPENROUTER: "deepseek/deepseek-v4-flash",
-    Backend.CLUSTER:    "gemma-4-31b",   # fast DGX model
+    Backend.CLUSTER:    "gemma-4-31b-it",   # fast DGX model
 }
 
 

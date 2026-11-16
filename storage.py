@@ -198,12 +198,17 @@ def ensure_status_rows(conn: sqlite3.Connection, experiment_id: int,
     conn.commit()
 
 
-def requeue_unfinished(conn: sqlite3.Connection, experiment_id: int) -> int:
-    """Put back in the queue the games that failed or were interrupted mid-run."""
+def requeue_unfinished(conn: sqlite3.Connection, experiment_id: int,
+                       keyword_set_ids: list[int] | None = None) -> int:
+    """Put back in the queue the games that failed or were interrupted mid-run
+    (only those of `keyword_set_ids`, when given)."""
+    only = ""
+    if keyword_set_ids is not None:
+        only = f" AND keyword_set_id IN ({','.join('?' * len(keyword_set_ids))})"
     n = conn.execute(
         f"UPDATE game_status SET status = '{QUEUED}' WHERE experiment_id = ? "
-        f"AND status IN ('{RUNNING}', '{ERROR}')",
-        (experiment_id,),
+        f"AND status IN ('{RUNNING}', '{ERROR}'){only}",
+        (experiment_id, *(keyword_set_ids or [])),
     ).rowcount
     conn.commit()
     return n

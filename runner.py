@@ -108,9 +108,10 @@ def _play(conn, experiment_id: int, cfg: ExperimentConfig, tasks: list, workers:
     """Keep up to `workers` games running; when one finishes, the next queued game starts.
     All status changes and DB writes happen here, in the main thread.
 
-    Pause  (Ctrl+C once, or <db>_exp<ID>.pause): start no new game, finish and save the running ones.
-    Cancel (Ctrl+C twice, <db>_exp<ID>.cancel, or MAX_CONSECUTIVE_API_FAILURES API failures in a row):
-           stop at once; the interrupted games go back to the queue.
+    Pause  (Ctrl+C once, <db>_exp<ID>.pause, or MAX_CONSECUTIVE_API_FAILURES API failures in a row):
+           start no new game, finish and save the running ones. API failures pause rather than
+           cancel (2026-11-16): cancelling threw away the paid calls of every running game.
+    Cancel (Ctrl+C twice or <db>_exp<ID>.cancel): stop at once; the interrupted games go back to the queue.
     Either way, resume later with --retry-experiment."""
     pause_file, cancel_file = control_files(db_path, experiment_id)
     for f in (pause_file, cancel_file):
@@ -162,10 +163,10 @@ def _play(conn, experiment_id: int, cfg: ExperimentConfig, tasks: list, workers:
                     storage.set_status(conn, experiment_id, ks_id, g_id, storage.ERROR,
                                        f"API: {type(e).__name__}: {e}")
                     print(f"  [ERROR] set {ks_id} game {g_id}: {type(e).__name__}: {e}", flush=True)
-                    if consecutive_failures >= MAX_CONSECUTIVE_API_FAILURES:
-                        stop["request"] = CANCEL
-                        print(f"  {consecutive_failures} API failures in a row: cancelling the queue "
-                              "(systemic error?)", flush=True)
+                    if consecutive_failures >= MAX_CONSECUTIVE_API_FAILURES and stop["request"] is None:
+                        stop["request"] = PAUSE
+                        print(f"  {consecutive_failures} API failures in a row: pausing the queue "
+                              "(no new games; waiting for the running ones)", flush=True)
                     continue
                 consecutive_failures = 0
                 invalid += _log_invalid(log_path, experiment_id, result)
@@ -247,9 +248,12 @@ def retry_missing_games(
     db_path: str = "results/decrypto.db",
     workers: int = 1,
     limit: int | None = None,
+    only_sets: list[int] | None = None,
 ) -> list[GameResult]:
     """Resume an experiment: requeue its errored and interrupted games, then play the queue
-    (all, or the first `limit`). The stored seeds and keyword-set file regenerate the same games."""
+    (all, or the first `limit`). The stored seeds and keyword-set file regenerate the same games.
+    With `only_sets`, only those keyword sets are requeued and played; other errored games keep
+    their status (e.g. games already abandoned after the last allowed replay)."""
     conn = storage.get_conn(db_path)
     cfg = storage.load_experiment(conn, experiment_id)
     _check_provider_pins(cfg)
@@ -261,8 +265,10 @@ def retry_missing_games(
             "continuing it would mix prompt texts within one configuration."
         )
     storage.ensure_status_rows(conn, experiment_id, _all_keys(cfg))
-    requeued = storage.requeue_unfinished(conn, experiment_id)
+    requeued = storage.requeue_unfinished(conn, experiment_id, only_sets)
     queued = storage.queued_games(conn, experiment_id)
+    if only_sets is not None:
+        queued = [key for key in queued if key[0] in only_sets]
     if not queued:
         print(f"Experiment #{experiment_id} is already complete — nothing to play.")
         conn.close()

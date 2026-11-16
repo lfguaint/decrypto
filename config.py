@@ -126,8 +126,12 @@ OPENROUTER_PROVIDERS = {
 # error and requeued on resume (cutting may not stop provider billing; the provider's
 # max output tokens is what bounds the cost of one call).
 REQUEST_TIMEOUT_S = 1800
-# Transient failures (429, 5xx, dropped connection) are retried with backoff.
+# Transient failures (5xx, dropped connection) are retried with backoff.
 TRANSIENT_RETRIES = 5
+# A 429 keeps being retried until this much waiting has passed (2026-11-16). OpenRouter's
+# shared pool for gpt-oss on DeepInfra returned 429 for minutes at a time, and a game that
+# gives up throws away the Encryptor calls already paid for (~$0.10 with DeepSeek V4 Pro).
+RATE_LIMIT_MAX_WAIT_S = 600
 
 
 def openrouter_routing(model_id: str) -> dict:
@@ -143,12 +147,12 @@ def openrouter_routing(model_id: str) -> dict:
 # ---------------------------------------------------------------------------
 # DGX Spark cluster models
 # nemotron-3-super: 256K ctx, complex reasoning — use max_tokens ≥ 1024
-# gemma-4-31b:      32K ctx, fast, accepts images
+# gemma-4-31b-it:   16K ctx, no reasoning by default, accepts images
 # ---------------------------------------------------------------------------
 
 DGX_MODELS = {
     "nemotron-super": "nemotron-3-super",
-    "dgx-gemma":      "gemma-4-31b",
+    "dgx-gemma":      "gemma-4-31b-it",
 }
 
 # Combined shortcut registry

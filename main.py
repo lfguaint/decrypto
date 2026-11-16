@@ -88,7 +88,17 @@ def parse_args():
                         help="Play only the first N games of the queue; the rest stay queued. "
                              "Pause: Ctrl+C once or create <db>_exp<ID>.pause; "
                              "cancel: Ctrl+C twice or <db>_exp<ID>.cancel")
+    parser.add_argument("--only-sets", type=str, default=None, metavar="IDS",
+                        help="With --retry-experiment: requeue and play only these keyword sets "
+                             "(comma-separated ids); other errored games keep their status")
     args = parser.parse_args()
+    if args.only_sets is not None:
+        if args.retry_experiment is None:
+            parser.error("--only-sets requires --retry-experiment")
+        try:
+            args.only_sets = sorted({int(s) for s in args.only_sets.split(",") if s.strip()})
+        except ValueError:
+            parser.error("--only-sets takes comma-separated keyword-set ids, e.g. 50,176,476")
     if args.status is None and args.retry_experiment is None and args.seed is None:
         parser.error("--seed is required (3 = benchmark, 42 = pilots/tests)")
     if args.retry_experiment is not None and (
@@ -125,17 +135,18 @@ def parse_args():
     )
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
-    return cfg, args.db, args.output, args.workers, args.retry_experiment, args.limit, args.status
+    return (cfg, args.db, args.output, args.workers, args.retry_experiment, args.limit, args.status,
+            args.only_sets)
 
 
 def main():
-    cfg, db_path, output_path, workers, retry_id, limit, status_id = parse_args()
+    cfg, db_path, output_path, workers, retry_id, limit, status_id, only_sets = parse_args()
 
     if status_id is not None:
         show_status(status_id, db_path)
         return
     if retry_id is not None:
-        retry_missing_games(retry_id, db_path, workers, limit)
+        retry_missing_games(retry_id, db_path, workers, limit, only_sets)
         return
     def _t(v):
         return "default" if v is None else v

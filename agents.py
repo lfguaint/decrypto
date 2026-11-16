@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import random
 import re
 import time
 from datetime import datetime
@@ -9,7 +10,7 @@ import openai
 from openai import OpenAI
 
 from config import (AgentConfig, Backend, BACKEND_SETTINGS, REQUEST_TIMEOUT_S, TRANSIENT_RETRIES,
-                    OLLAMA_MODELS, OPENROUTER_MODELS, DGX_MODELS, openrouter_routing)
+                    RATE_LIMIT_MAX_WAIT_S, OLLAMA_MODELS, OPENROUTER_MODELS, DGX_MODELS, openrouter_routing)
 from models import CallRecord, KeywordPair, RoundRecord, count_multiword
 import prompts
 
@@ -74,18 +75,33 @@ def _extra(obj) -> dict:
 
 
 def _create_with_retries(client: OpenAI, kwargs: dict):
-    """Retry transient failures with exponential backoff; a timeout is raised at once."""
-    for attempt in range(TRANSIENT_RETRIES + 1):
+    """Retry transient failures with exponential backoff; a timeout is raised at once.
+    5xx and dropped connections get TRANSIENT_RETRIES retries (a closed tunnel fails fast);
+    a 429 is retried until RATE_LIMIT_MAX_WAIT_S of waiting, with jitter so that concurrent
+    games do not retry in lockstep."""
+    transient = rate_limited = 0
+    waited = 0.0
+    while True:
         started_at = datetime.now().isoformat(timespec="milliseconds")
         t0 = time.time()
         try:
             return client.chat.completions.create(**kwargs), time.time() - t0, started_at
         except openai.APITimeoutError:
             raise  # longer than REQUEST_TIMEOUT_S: do not pay for it again
-        except (openai.RateLimitError, openai.InternalServerError, openai.APIConnectionError):
-            if attempt == TRANSIENT_RETRIES:
+        except openai.RateLimitError:
+            if waited >= RATE_LIMIT_MAX_WAIT_S:
                 raise
-            time.sleep(min(60, 2 ** attempt))
+            # 1, 2, 4, ... up to 60 s (x0.5-1.5), never past the total budget.
+            delay = min(60.0, 2.0 ** min(rate_limited, 6)) * random.uniform(0.5, 1.5)
+            delay = min(delay, RATE_LIMIT_MAX_WAIT_S - waited + 1)
+            rate_limited += 1
+            waited += delay
+            time.sleep(delay)
+        except (openai.InternalServerError, openai.APIConnectionError):
+            if transient >= TRANSIENT_RETRIES:
+                raise
+            time.sleep(min(60, 2 ** transient))
+            transient += 1
 
 
 def _call(
