@@ -51,11 +51,14 @@ def _name(model: str) -> str:
     return DISPLAY_NAMES.get(model, model)
 
 
-def experiment_label(conn: sqlite3.Connection, experiment_id: int) -> str:
+def experiment_label(conn: sqlite3.Connection, experiment_id: int, labels: dict | None = None) -> str:
+    """Legend label with the number of games; `labels` (experiment id -> text) overrides the model names."""
     enc, dec, icp = conn.execute(
         "SELECT encryptor_model, decoder_model, interceptor_model FROM experiments WHERE id = ?",
         (experiment_id,)).fetchone()
     n = conn.execute("SELECT COUNT(*) FROM games WHERE experiment_id = ?", (experiment_id,)).fetchone()[0]
+    if labels and experiment_id in labels:
+        return f"{labels[experiment_id]} (n = {n})"
     if enc == dec == icp:
         return f"{_name(enc)} (n = {n})"
     return f"Enc {_name(enc)} / Dec {_name(dec)} / Int {_name(icp)} (n = {n})"
@@ -108,7 +111,8 @@ ROUNDS = 5
 HATCHES = ["", "////", "....", "xxxx"]
 
 
-def plot(db_path: str, experiment_ids: list, name: str, width_pt: float, out_dir: str) -> list:
+def plot(db_path: str, experiment_ids: list, name: str, width_pt: float, out_dir: str,
+         labels: dict | None = None) -> list:
     _style()
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     chances = {chance_rate(conn, e) for e in experiment_ids}
@@ -117,8 +121,8 @@ def plot(db_path: str, experiment_ids: list, name: str, width_pt: float, out_dir
     chance = chances.pop()
     paths = []
     for suffix, panels in FIGURES.items():
-        paths += _plot_figure(conn, experiment_ids, f"{name}_{suffix}", panels, chance, width_pt, out_dir)
-    paths += _plot_score(conn, experiment_ids, f"{name}_score", chance, width_pt, out_dir)
+        paths += _plot_figure(conn, experiment_ids, f"{name}_{suffix}", panels, chance, width_pt, out_dir, labels)
+    paths += _plot_score(conn, experiment_ids, f"{name}_score", chance, width_pt, out_dir, labels)
     conn.close()
     return paths
 
@@ -145,7 +149,7 @@ def _save(fig, name: str, out_dir: str) -> list:
 
 
 def _plot_score(conn: sqlite3.Connection, experiment_ids: list, name: str, chance: float,
-                width_pt: float, out_dir: str) -> list:
+                width_pt: float, out_dir: str, labels: dict | None = None) -> list:
     """Histogram of Interceptor points per game (I or F = 1, S = 0; R1 counts). Bars at 0-1
     points (the Encryptor team wins) are lighter than at 2+ (the Interceptor wins), and each
     side is labelled with the games each experiment won there."""
@@ -179,12 +183,12 @@ def _plot_score(conn: sqlite3.Connection, experiment_ids: list, name: str, chanc
         # Legend swatch at full opacity: the bars themselves mix two shades.
         handles.append(Patch(facecolor=color, hatch=HATCHES[idx % len(HATCHES)], edgecolor="white",
                              linewidth=0, alpha=0.9,
-                             label=f"{experiment_label(conn, e)[:-1]}; mean {sum(points) / n:.2f})"))
+                             label=f"{experiment_label(conn, e, labels)[:-1]}; mean {sum(points) / n:.2f})"))
 
         wins = sum(p >= 2 for p in points)
         # Left counts sit right of x = 0 to clear the chance marker there (~81%).
         for x_side, games in ((0.85, n - wins), (3.5, wins)):
-            ax.text(x_side, 0.9 - 0.07 * idx, f"{games} of {n} ({100 * games / n:.1f}%)",
+            ax.text(x_side, 0.89 - 0.085 * idx, f"{games} of {n} ({100 * games / n:.1f}%)",
                     transform=ax.get_xaxis_transform(), ha="center", va="top", fontsize=7, color=color)
 
     blind = [math.comb(ROUNDS, p) * chance ** p * (1 - chance) ** (ROUNDS - p) for p in range(ROUNDS + 1)]
@@ -212,7 +216,7 @@ def _plot_score(conn: sqlite3.Connection, experiment_ids: list, name: str, chanc
 
 
 def _plot_figure(conn: sqlite3.Connection, experiment_ids: list, name: str, panels: list, chance: float,
-                 width_pt: float, out_dir: str) -> list:
+                 width_pt: float, out_dir: str, labels: dict | None = None) -> list:
     width_in = width_pt / 72.27
     fig, axes = plt.subplots(1, len(panels), figsize=(width_in, width_in * 0.42), sharey=True)
 
@@ -225,7 +229,7 @@ def _plot_figure(conn: sqlite3.Connection, experiment_ids: list, name: str, pane
             ax.fill_between(rounds, lo, hi, color=color, alpha=0.18, linewidth=0)
             line, = ax.plot(rounds, rate, color=color, linestyle=LINESTYLES[idx % len(LINESTYLES)],
                             marker=MARKERS[idx % len(MARKERS)], markersize=3, linewidth=1.2)
-        line.set_label(experiment_label(conn, e))
+        line.set_label(experiment_label(conn, e, labels))
         handles.append(line)
 
     chance_line = None
@@ -245,9 +249,12 @@ def _plot_figure(conn: sqlite3.Connection, experiment_ids: list, name: str, pane
         chance_line.set_label(f"Chance (1/{round(1 / chance)})")
         handles.append(chance_line)
 
-    fig.legend(handles=handles, loc="upper center", ncol=len(handles), frameon=False,
+    # One row fits up to four entries at article width; more wrap to three columns.
+    ncol = len(handles) if len(handles) <= 4 else 3
+    rows = math.ceil(len(handles) / ncol)
+    fig.legend(handles=handles, loc="upper center", ncol=ncol, frameon=False,
                bbox_to_anchor=(0.5, 1.02), handlelength=2.4)
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.1 * rows))
     return _save(fig, name, out_dir)
 
 
@@ -258,9 +265,14 @@ def main() -> None:
     ap.add_argument("--name", default=None, help="output file name without extension (default: rounds_exp<ids>)")
     ap.add_argument("--width", type=float, default=345.0, help="figure width in pt (article \\textwidth: ~345)")
     ap.add_argument("--out-dir", default="figures")
+    ap.add_argument("--labels", nargs="+", default=None,
+                    help="legend labels, one per experiment in the same order (default: model names per role)")
     args = ap.parse_args()
+    if args.labels is not None and len(args.labels) != len(args.experiments):
+        ap.error("--labels takes one label per experiment")
+    labels = dict(zip(args.experiments, args.labels)) if args.labels else None
     name = args.name or "rounds_exp" + "_".join(map(str, args.experiments))
-    for path in plot(args.db, args.experiments, name, args.width, args.out_dir):
+    for path in plot(args.db, args.experiments, name, args.width, args.out_dir, labels):
         print(f"wrote {path}")
 
 
